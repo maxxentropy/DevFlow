@@ -2,7 +2,6 @@
 using DevFlow.Domain.Common;
 using DevFlow.Domain.Workflows.Enums;
 using DevFlow.SharedKernel.Common;
-using System.Text.Json;
 
 namespace DevFlow.Domain.Workflows.Entities;
 
@@ -91,13 +90,7 @@ public sealed class WorkflowStep : Entity<WorkflowStepId>
     /// <summary>
     /// Creates a new workflow step with the specified details.
     /// </summary>
-    /// <param name="id">The step identifier</param>
-    /// <param name="name">The step name</param>
-    /// <param name="pluginId">The plugin identifier</param>
-    /// <param name="order">The execution order</param>
-    /// <param name="configuration">The step configuration</param>
-    /// <returns>A result containing the created step or validation errors</returns>
-    public static Result<fStep> Create(
+    public static Result<WorkflowStep> Create(
         WorkflowStepId id,
         string name,
         PluginId pluginId,
@@ -105,25 +98,24 @@ public sealed class WorkflowStep : Entity<WorkflowStepId>
         Dictionary<string, object>? configuration = null)
     {
         if (string.IsNullOrWhiteSpace(name))
-            return Result<fStep>.Failure(Error.Validation(
+            return Result<WorkflowStep>.Failure(Error.Validation(
                 "WorkflowStep.NameEmpty", "Step name cannot be empty."));
 
         if (name.Length > 200)
-            return Result<fStep>.Failure(Error.Validation(
+            return Result<WorkflowStep>.Failure(Error.Validation(
                 "WorkflowStep.NameTooLong", "Step name cannot exceed 200 characters."));
 
         if (order < 0)
-            return Result<fStep>.Failure(Error.Validation(
+            return Result<WorkflowStep>.Failure(Error.Validation(
                 "WorkflowStep.InvalidOrder", "Step order must be non-negative."));
 
         var step = new WorkflowStep(id, name.Trim(), pluginId, order, configuration);
-        return Result<fStep>.Success(step);
+        return Result<WorkflowStep>.Success(step);
     }
 
     /// <summary>
     /// Marks the step as started.
     /// </summary>
-    /// <returns>A result indicating success or failure</returns>
     public Result Start()
     {
         if (Status != WorkflowStepStatus.Pending)
@@ -139,8 +131,6 @@ public sealed class WorkflowStep : Entity<WorkflowStepId>
     /// <summary>
     /// Marks the step as completed successfully with optional output.
     /// </summary>
-    /// <param name="output">The step execution output</param>
-    /// <returns>A result indicating success or failure</returns>
     public Result Complete(string? output = null)
     {
         if (Status != WorkflowStepStatus.Running)
@@ -157,8 +147,6 @@ public sealed class WorkflowStep : Entity<WorkflowStepId>
     /// <summary>
     /// Marks the step as failed with an error message.
     /// </summary>
-    /// <param name="errorMessage">The error message</param>
-    /// <returns>A result indicating success or failure</returns>
     public Result Fail(string errorMessage)
     {
         if (Status != WorkflowStepStatus.Running)
@@ -179,8 +167,6 @@ public sealed class WorkflowStep : Entity<WorkflowStepId>
     /// <summary>
     /// Skips the step execution.
     /// </summary>
-    /// <param name="reason">The reason for skipping</param>
-    /// <returns>A result indicating success or failure</returns>
     public Result Skip(string? reason = null)
     {
         if (Status != WorkflowStepStatus.Pending)
@@ -197,8 +183,6 @@ public sealed class WorkflowStep : Entity<WorkflowStepId>
     /// <summary>
     /// Updates the step configuration.
     /// </summary>
-    /// <param name="configuration">The new configuration</param>
-    /// <returns>A result indicating success or failure</returns>
     public Result UpdateConfiguration(Dictionary<string, object> configuration)
     {
         if (Status != WorkflowStepStatus.Pending)

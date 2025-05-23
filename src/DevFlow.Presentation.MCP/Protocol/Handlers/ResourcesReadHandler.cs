@@ -65,7 +65,7 @@ public sealed class ResourcesReadHandler : IMcpRequestHandler
 
     private async Task<List<McpContent>> ReadWorkflowsResourceAsync(CancellationToken cancellationToken)
     {
-        var query = new GetWorkflowsQuery(1, 100); // Get first 100 workflows
+        var query = new GetWorkflowQuery(1, 100); // Get first 100 workflows
         var result = await _mediator.Send(query, cancellationToken);
 
         if (result.IsSuccess)

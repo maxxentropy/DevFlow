@@ -242,7 +242,7 @@ public sealed class ToolsCallHandler : IMcpRequestHandler
         var status = arguments?.GetValueOrDefault("status")?.ToString();
         var searchTerm = arguments?.GetValueOrDefault("searchTerm")?.ToString();
 
-        var query = new GetWorkflowsQuery(pageNumber, pageSize, status, searchTerm);
+        var query = new GetWorkflowQuery(pageNumber, pageSize, status, searchTerm);
         var result = await _mediator.Send(query, cancellationToken);
 
         if (result.IsSuccess)
