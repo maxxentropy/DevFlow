@@ -1,17 +1,13 @@
 using DevFlow.Application.Common;
 using DevFlow.Application.Workflows.DTOs;
+using DevFlow.Domain.Common;
 
 namespace DevFlow.Application.Workflows.Queries;
 
+
+
 /// <summary>
-/// Query to get a list of workflows with optional filtering.
+/// Query to get a workflow by its identifier.
 /// </summary>
-/// <param name="PageNumber">The page number (1-based)</param>
-/// <param name="PageSize">The number of items per page</param>
-/// <param name="Status">Optional status filter</param>
-/// <param name="SearchTerm">Optional search term for name/description</param>
-public sealed record GetWorkflowQuery(
-    int PageNumber = 1,
-    int PageSize = 10,
-    string? Status = null,
-    string? SearchTerm = null) : IQuery<PagedResult<WorkflowDto>>;
+/// <param name="WorkflowId">The workflow identifier</param>
+public sealed record GetWorkflowQuery(WorkflowId WorkflowId) : IQuery<WorkflowDto>;

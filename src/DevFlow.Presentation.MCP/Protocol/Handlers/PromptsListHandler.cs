@@ -1,4 +1,3 @@
-// File: src/DevFlow.Presentation.MCP/Protocol/Handlers/PromptsListHandler.cs
 using DevFlow.Presentation.MCP.Protocol.Models;
 using Microsoft.Extensions.Logging;
 using System.Text.Json.Serialization;
@@ -10,18 +9,18 @@ namespace DevFlow.Presentation.MCP.Protocol.Handlers;
 /// </summary>
 public sealed class PromptsListHandler : IMcpRequestHandler
 {
-    private readonly ILogger<PromptsListHandler> _logger;
+  private readonly ILogger<PromptsListHandler> _logger;
 
-    public PromptsListHandler(ILogger<PromptsListHandler> logger)
-    {
-        _logger = logger;
-    }
+  public PromptsListHandler(ILogger<PromptsListHandler> logger)
+  {
+    _logger = logger;
+  }
 
-    public Task<object?> HandleAsync(McpRequest request, CancellationToken cancellationToken = default)
-    {
-        _logger.LogInformation("Handling MCP prompts/list request");
+  public Task<object?> HandleAsync(McpRequest request, CancellationToken cancellationToken = default)
+  {
+    _logger.LogInformation("Handling MCP prompts/list request");
 
-        var prompts = new List<McpPrompt>
+    var prompts = new List<McpPrompt>
         {
             new()
             {
@@ -45,39 +44,39 @@ public sealed class PromptsListHandler : IMcpRequestHandler
             }
         };
 
-        var response = new PromptsListResponse { Prompts = prompts };
-        
-        _logger.LogInformation("Listed {Count} prompts", prompts.Count);
-        return Task.FromResult<object?>(response);
-    }
+    var response = new PromptsListResponse { Prompts = prompts };
 
-    private record PromptsListResponse
-    {
-        [JsonPropertyName("prompts")]
-        public required List<McpPrompt> Prompts { get; init; }
-    }
+    _logger.LogInformation("Listed {Count} prompts", prompts.Count);
+    return Task.FromResult<object?>(response);
+  }
 
-    private record McpPrompt
-    {
-        [JsonPropertyName("name")]
-        public required string Name { get; init; }
+  private record PromptsListResponse
+  {
+    [JsonPropertyName("prompts")]
+    public required List<McpPrompt> Prompts { get; init; }
+  }
 
-        [JsonPropertyName("description")]
-        public required string Description { get; init; }
+  private record McpPrompt
+  {
+    [JsonPropertyName("name")]
+    public required string Name { get; init; }
 
-        [JsonPropertyName("arguments")]
-        public List<McpPromptArgument>? Arguments { get; init; }
-    }
+    [JsonPropertyName("description")]
+    public required string Description { get; init; }
 
-    private record McpPromptArgument
-    {
-        [JsonPropertyName("name")]
-        public required string Name { get; init; }
+    [JsonPropertyName("arguments")]
+    public List<McpPromptArgument>? Arguments { get; init; }
+  }
 
-        [JsonPropertyName("description")]
-        public required string Description { get; init; }
+  private record McpPromptArgument
+  {
+    [JsonPropertyName("name")]
+    public required string Name { get; init; }
 
-        [JsonPropertyName("required")]
-        public bool Required { get; init; }
-    }
+    [JsonPropertyName("description")]
+    public required string Description { get; init; }
+
+    [JsonPropertyName("required")]
+    public bool Required { get; init; }
+  }
 }

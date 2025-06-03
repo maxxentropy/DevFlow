@@ -2,7 +2,8 @@ using DevFlow.Application.Common;
 using DevFlow.Application.Workflows;
 using DevFlow.Application.Workflows.DTOs;
 using DevFlow.Application.Workflows.Queries;
-using DevFlow.SharedKernel.Common;
+using DevFlow.SharedKernel.Results;
+using DevFlow.SharedKernel.ValueObjects;
 using Microsoft.Extensions.Logging;
 
 namespace DevFlow.Application.Workflows.Queries.Handlers;

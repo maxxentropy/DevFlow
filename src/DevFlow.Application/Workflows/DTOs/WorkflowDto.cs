@@ -7,7 +7,7 @@ namespace DevFlow.Application.Workflows.DTOs;
 /// </summary>
 public sealed record WorkflowDto
 {
-    public required string Id { get; init; }
+    public required Guid Id { get; init; }
     public required string Name { get; init; }
     public required string Description { get; init; }
     public required WorkflowStatus Status { get; init; }
@@ -24,9 +24,9 @@ public sealed record WorkflowDto
 /// </summary>
 public sealed record WorkflowStepDto
 {
-    public required string Id { get; init; }
+    public required Guid Id { get; init; }
     public required string Name { get; init; }
-    public required string PluginId { get; init; }
+    public required Guid PluginId { get; init; }
     public required int Order { get; init; }
     public required Dictionary<string, object> Configuration { get; init; } = new();
     public required WorkflowStepStatus Status { get; init; }

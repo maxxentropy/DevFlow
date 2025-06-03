@@ -1,4 +1,3 @@
-// File: src/DevFlow.Presentation.MCP/Protocol/Handlers/ToolsListHandler.cs
 using DevFlow.Application.Plugins;
 using DevFlow.Presentation.MCP.Protocol.Models;
 using Microsoft.Extensions.Logging;
@@ -11,68 +10,68 @@ namespace DevFlow.Presentation.MCP.Protocol.Handlers;
 /// </summary>
 public sealed class ToolsListHandler : IMcpRequestHandler
 {
-    private readonly IPluginRepository _pluginRepository;
-    private readonly ILogger<ToolsListHandler> _logger;
+  private readonly IPluginRepository _pluginRepository;
+  private readonly ILogger<ToolsListHandler> _logger;
 
-    public ToolsListHandler(IPluginRepository pluginRepository, ILogger<ToolsListHandler> logger)
+  public ToolsListHandler(IPluginRepository pluginRepository, ILogger<ToolsListHandler> logger)
+  {
+    _pluginRepository = pluginRepository;
+    _logger = logger;
+  }
+
+  public async Task<object?> HandleAsync(McpRequest request, CancellationToken cancellationToken = default)
+  {
+    _logger.LogInformation("Handling MCP tools/list request");
+
+    try
     {
-        _pluginRepository = pluginRepository;
-        _logger = logger;
-    }
+      var plugins = await _pluginRepository.GetAllAsync(cancellationToken);
 
-    public async Task<object?> HandleAsync(McpRequest request, CancellationToken cancellationToken = default)
-    {
-        _logger.LogInformation("Handling MCP tools/list request");
-
-        try
-        {
-            var plugins = await _pluginRepository.GetAllAsync(cancellationToken);
-            
-            var tools = plugins
-                .Where(p => p.Status == DevFlow.Domain.Plugins.Enums.PluginStatus.Available)
-                .Select(p => new McpTool
+      var tools = plugins
+          .Where(p => p.Status == DevFlow.Domain.Plugins.Enums.PluginStatus.Available)
+          .Select(p => new McpTool
+          {
+            Name = $"plugin_{p.Metadata.Name.ToLowerInvariant()}",
+            Description = $"{p.Metadata.Description} (Language: {p.Metadata.Language})",
+            InputSchema = new
+            {
+              type = "object",
+              properties = new
+              {
+                configuration = new
                 {
-                    Name = $"plugin_{p.Metadata.Name.ToLowerInvariant()}",
-                    Description = $"{p.Metadata.Description} (Language: {p.Metadata.Language})",
-                    InputSchema = new
-                    {
-                        type = "object",
-                        properties = new
-                        {
-                            configuration = new
-                            {
-                                type = "object",
-                                description = "Plugin configuration parameters",
-                                additionalProperties = true
-                            },
-                            workflowId = new
-                            {
-                                type = "string",
-                                description = "Target workflow ID (optional for standalone execution)"
-                            }
-                        }
-                    }
-                })
-                .ToList();
+                  type = "object",
+                  description = "Plugin configuration parameters",
+                  additionalProperties = true
+                },
+                workflowId = new
+                {
+                  type = "string",
+                  description = "Target workflow ID (optional for standalone execution)"
+                }
+              }
+            }
+          })
+          .ToList();
 
-            // Add built-in workflow management tools
-            tools.AddRange(GetBuiltInTools());
+      // Add built-in workflow management tools
+      tools.AddRange(GetBuiltInTools());
 
-            var response = new ToolsListResponse { Tools = tools };
-            
-            _logger.LogInformation("Listed {Count} available tools", tools.Count);
-            return response;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to list tools");
-            throw;
-        }
+      var response = new ToolsListResponse { Tools = tools };
+
+      _logger.LogInformation("Listed {Count} available tools", tools.Count);
+      return response;
     }
-
-    private static List<McpTool> GetBuiltInTools()
+    catch (Exception ex)
     {
-        return new List<McpTool>
+      _logger.LogError(ex, "Failed to list tools");
+      throw;
+    }
+  }
+
+  private static List<McpTool> GetBuiltInTools()
+  {
+    return new List<McpTool>
         {
             new()
             {
@@ -152,11 +151,11 @@ public sealed class ToolsListHandler : IMcpRequestHandler
                 }
             }
         };
-    }
+  }
 
-    private record ToolsListResponse
-    {
-        [JsonPropertyName("tools")]
-        public required List<McpTool> Tools { get; init; }
-    }
+  private record ToolsListResponse
+  {
+    [JsonPropertyName("tools")]
+    public required List<McpTool> Tools { get; init; }
+  }
 }

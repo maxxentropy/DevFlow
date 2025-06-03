@@ -7,8 +7,24 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Common\AggregateRoot.cs" />
+    <Compile Remove="Common\Entity.cs" />
+    <Compile Remove="Common\Error.cs" />
+    <Compile Remove="Common\IAggregateRoot.cs" />
+    <Compile Remove="Common\IEntityId.cs" />
+    <Compile Remove="Common\Result.cs" />
+    <Compile Remove="Common\StronglyTypedId.cs" />
+    <Compile Remove="Common\ValueObject.cs" />
+    <Compile Remove="ValueObject.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="MediatR" Version="12.2.0" />
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Common\" />
   </ItemGroup>
 
 </Project>

@@ -1,4 +1,4 @@
-using DevFlow.SharedKernel.Common;
+using DevFlow.SharedKernel.Results;
 using MediatR;
 
 namespace DevFlow.Application.Common;

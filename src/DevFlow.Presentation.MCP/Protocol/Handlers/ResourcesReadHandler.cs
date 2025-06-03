@@ -1,4 +1,3 @@
-// File: src/DevFlow.Presentation.MCP/Protocol/Handlers/ResourcesReadHandler.cs
 using DevFlow.Application.Workflows.Queries;
 using DevFlow.Presentation.MCP.Protocol.Models;
 using MediatR;
@@ -13,67 +12,67 @@ namespace DevFlow.Presentation.MCP.Protocol.Handlers;
 /// </summary>
 public sealed class ResourcesReadHandler : IMcpRequestHandler
 {
-    private readonly IMediator _mediator;
-    private readonly ILogger<ResourcesReadHandler> _logger;
+  private readonly IMediator _mediator;
+  private readonly ILogger<ResourcesReadHandler> _logger;
 
-    public ResourcesReadHandler(IMediator mediator, ILogger<ResourcesReadHandler> logger)
+  public ResourcesReadHandler(IMediator mediator, ILogger<ResourcesReadHandler> logger)
+  {
+    _mediator = mediator;
+    _logger = logger;
+  }
+
+  public async Task<object?> HandleAsync(McpRequest request, CancellationToken cancellationToken = default)
+  {
+    _logger.LogInformation("Handling MCP resources/read request");
+
+    try
     {
-        _mediator = mediator;
-        _logger = logger;
+      var readRequest = JsonSerializer.Deserialize<ResourcesReadRequest>(
+          JsonSerializer.Serialize(request.Params),
+          new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+      if (readRequest?.Uri is null)
+      {
+        throw new ArgumentException("Missing 'uri' parameter");
+      }
+
+      var contents = await ReadResourceAsync(readRequest.Uri, cancellationToken);
+
+      return new McpResourceContents
+      {
+        Uri = readRequest.Uri,
+        Contents = contents
+      };
     }
-
-    public async Task<object?> HandleAsync(McpRequest request, CancellationToken cancellationToken = default)
+    catch (Exception ex)
     {
-        _logger.LogInformation("Handling MCP resources/read request");
-
-        try
-        {
-            var readRequest = JsonSerializer.Deserialize<ResourcesReadRequest>(
-                JsonSerializer.Serialize(request.Params),
-                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-
-            if (readRequest?.Uri is null)
-            {
-                throw new ArgumentException("Missing 'uri' parameter");
-            }
-
-            var contents = await ReadResourceAsync(readRequest.Uri, cancellationToken);
-            
-            return new McpResourceContents
-            {
-                Uri = readRequest.Uri,
-                Contents = contents
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to read resource");
-            throw;
-        }
+      _logger.LogError(ex, "Failed to read resource");
+      throw;
     }
+  }
 
-    private async Task<List<McpContent>> ReadResourceAsync(string uri, CancellationToken cancellationToken)
+  private async Task<List<McpContent>> ReadResourceAsync(string uri, CancellationToken cancellationToken)
+  {
+    return uri switch
     {
-        return uri switch
-        {
-            "devflow://workflows" => await ReadWorkflowsResourceAsync(cancellationToken),
-            "devflow://plugins" => await ReadPluginsResourceAsync(cancellationToken),
-            "devflow://config" => ReadConfigurationResource(),
-            _ => throw new ArgumentException($"Unknown resource URI: {uri}")
-        };
-    }
+      "devflow://workflows" => await ReadWorkflowsResourceAsync(cancellationToken),
+      "devflow://plugins" => await ReadPluginsResourceAsync(cancellationToken),
+      "devflow://config" => ReadConfigurationResource(),
+      _ => throw new ArgumentException($"Unknown resource URI: {uri}")
+    };
+  }
 
-    private async Task<List<McpContent>> ReadWorkflowsResourceAsync(CancellationToken cancellationToken)
+  private async Task<List<McpContent>> ReadWorkflowsResourceAsync(CancellationToken cancellationToken)
+  {
+    var query = new GetWorkflowsQuery(1, 100); // Get first 100 workflows
+    var result = await _mediator.Send(query, cancellationToken);
+
+    if (result.IsSuccess)
     {
-        var query = new GetWorkflowQuery(1, 100); // Get first 100 workflows
-        var result = await _mediator.Send(query, cancellationToken);
+      var workflowsJson = JsonSerializer.Serialize(result.Value,
+          new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
 
-        if (result.IsSuccess)
-        {
-            var workflowsJson = JsonSerializer.Serialize(result.Value, 
-                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
-
-            return new List<McpContent>
+      return new List<McpContent>
             {
                 new()
                 {
@@ -81,9 +80,9 @@ public sealed class ResourcesReadHandler : IMcpRequestHandler
                     Text = workflowsJson
                 }
             };
-        }
+    }
 
-        return new List<McpContent>
+    return new List<McpContent>
         {
             new()
             {
@@ -91,12 +90,12 @@ public sealed class ResourcesReadHandler : IMcpRequestHandler
                 Text = $"Error reading workflows: {result.Error.Message}"
             }
         };
-    }
+  }
 
-    private Task<List<McpContent>> ReadPluginsResourceAsync(CancellationToken cancellationToken)
-    {
-        // TODO: Implement plugin listing when plugin repository is available
-        return Task.FromResult(new List<McpContent>
+  private Task<List<McpContent>> ReadPluginsResourceAsync(CancellationToken cancellationToken)
+  {
+    // TODO: Implement plugin listing when plugin repository is available
+    return Task.FromResult(new List<McpContent>
         {
             new()
             {
@@ -104,22 +103,22 @@ public sealed class ResourcesReadHandler : IMcpRequestHandler
                 Text = "Plugin listing not yet implemented"
             }
         });
-    }
+  }
 
-    private List<McpContent> ReadConfigurationResource()
+  private List<McpContent> ReadConfigurationResource()
+  {
+    var config = new
     {
-        var config = new
-        {
-            serverName = "DevFlow MCP Server",
-            version = "1.0.0",
-            supportedLanguages = new[] { "CSharp", "TypeScript", "Python" },
-            capabilities = new[] { "workflows", "plugins", "automation" }
-        };
+      serverName = "DevFlow MCP Server",
+      version = "1.0.0",
+      supportedLanguages = new[] { "CSharp", "TypeScript", "Python" },
+      capabilities = new[] { "workflows", "plugins", "automation" }
+    };
 
-        var configJson = JsonSerializer.Serialize(config, 
-            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
+    var configJson = JsonSerializer.Serialize(config,
+        new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
 
-        return new List<McpContent>
+    return new List<McpContent>
         {
             new()
             {
@@ -127,11 +126,11 @@ public sealed class ResourcesReadHandler : IMcpRequestHandler
                 Text = configJson
             }
         };
-    }
+  }
 
-    private record ResourcesReadRequest
-    {
-        [JsonPropertyName("uri")]
-        public string? Uri { get; init; }
-    }
+  private record ResourcesReadRequest
+  {
+    [JsonPropertyName("uri")]
+    public string? Uri { get; init; }
+  }
 }

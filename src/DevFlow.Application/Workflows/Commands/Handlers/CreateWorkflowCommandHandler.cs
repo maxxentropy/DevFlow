@@ -3,7 +3,7 @@ using DevFlow.Application.Workflows;
 using DevFlow.Application.Workflows.Commands;
 using DevFlow.Domain.Common;
 using DevFlow.Domain.Workflows.Entities;
-using DevFlow.SharedKernel.Common;
+using DevFlow.SharedKernel.Results;
 using Microsoft.Extensions.Logging;
 
 namespace DevFlow.Application.Workflows.Commands.Handlers;

@@ -1,4 +1,3 @@
-// File: src/DevFlow.Presentation.MCP/Protocol/Handlers/ResourcesListHandler.cs
 using DevFlow.Presentation.MCP.Protocol.Models;
 using Microsoft.Extensions.Logging;
 using System.Text.Json.Serialization;
@@ -10,18 +9,18 @@ namespace DevFlow.Presentation.MCP.Protocol.Handlers;
 /// </summary>
 public sealed class ResourcesListHandler : IMcpRequestHandler
 {
-    private readonly ILogger<ResourcesListHandler> _logger;
+  private readonly ILogger<ResourcesListHandler> _logger;
 
-    public ResourcesListHandler(ILogger<ResourcesListHandler> logger)
-    {
-        _logger = logger;
-    }
+  public ResourcesListHandler(ILogger<ResourcesListHandler> logger)
+  {
+    _logger = logger;
+  }
 
-    public Task<object?> HandleAsync(McpRequest request, CancellationToken cancellationToken = default)
-    {
-        _logger.LogInformation("Handling MCP resources/list request");
+  public Task<object?> HandleAsync(McpRequest request, CancellationToken cancellationToken = default)
+  {
+    _logger.LogInformation("Handling MCP resources/list request");
 
-        var resources = new List<McpResource>
+    var resources = new List<McpResource>
         {
             new()
             {
@@ -46,15 +45,15 @@ public sealed class ResourcesListHandler : IMcpRequestHandler
             }
         };
 
-        var response = new ResourcesListResponse { Resources = resources };
-        
-        _logger.LogInformation("Listed {Count} resources", resources.Count);
-        return Task.FromResult<object?>(response);
-    }
+    var response = new ResourcesListResponse { Resources = resources };
 
-    private record ResourcesListResponse
-    {
-        [JsonPropertyName("resources")]
-        public required List<McpResource> Resources { get; init; }
-    }
+    _logger.LogInformation("Listed {Count} resources", resources.Count);
+    return Task.FromResult<object?>(response);
+  }
+
+  private record ResourcesListResponse
+  {
+    [JsonPropertyName("resources")]
+    public required List<McpResource> Resources { get; init; }
+  }
 }
