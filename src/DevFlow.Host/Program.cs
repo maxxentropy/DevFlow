@@ -46,6 +46,7 @@ try
   builder.Services.AddApplication();
   builder.Services.AddInfrastructure(builder.Configuration);
   builder.Services.AddMcpServer();
+  builder.Services.AddPluginSystem();
 
   // Add ASP.NET Core services
   builder.Services.AddControllers()

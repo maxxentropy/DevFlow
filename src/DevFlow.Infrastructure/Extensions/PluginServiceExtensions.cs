@@ -1,6 +1,8 @@
-﻿using DevFlow.Application.Plugins.Runtime;
+﻿using DevFlow.Application.Plugins;
+using DevFlow.Application.Plugins.Runtime;
 using DevFlow.Infrastructure.Plugins;
 using DevFlow.Infrastructure.Plugins.Runtime;
+using DevFlow.Infrastructure.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -15,6 +17,18 @@ public static class PluginServiceExtensions
   private const string LoggerCategory = "DevFlow.Infrastructure.Extensions.PluginServiceExtensions";
 
   /// <summary>
+  /// Adds the complete plugin system including runtime managers, discovery, and initialization.
+  /// </summary>
+  /// <param name="services">The service collection</param>
+  /// <returns>The service collection for method chaining</returns>
+  public static IServiceCollection AddPluginSystem(this IServiceCollection services)
+  {
+    return services
+        .AddPluginRuntime()
+        .AddPluginInitialization();
+  }
+
+  /// <summary>
   /// Adds plugin runtime services to the service collection.
   /// </summary>
   /// <param name="services">The service collection</param>
@@ -24,7 +38,7 @@ public static class PluginServiceExtensions
     return services
         .AddPluginDiscovery()
         .AddPluginRuntimeManagers()
-        .AddPluginOrchestration();
+        .AddPluginExecution();
   }
 
   /// <summary>
@@ -35,7 +49,7 @@ public static class PluginServiceExtensions
   public static IServiceCollection AddPluginDiscovery(this IServiceCollection services)
   {
     // Register plugin discovery service
-    services.TryAddScoped<IPluginDiscoveryService, PluginDiscoveryService>();
+    services.AddScoped<IPluginDiscoveryService, PluginDiscoveryService>();
 
     return services;
   }
@@ -48,26 +62,43 @@ public static class PluginServiceExtensions
   public static IServiceCollection AddPluginRuntimeManagers(this IServiceCollection services)
   {
     // Register individual runtime managers
-    services.TryAddScoped<CSharpRuntimeManager>();
+    services.AddScoped<CSharpRuntimeManager>();
+
+    // TODO: Add TypeScript and Python runtime managers when implemented
+    // services.AddScoped<TypeScriptRuntimeManager>();
+    // services.AddScoped<PythonRuntimeManager>();
 
     // Register runtime manager factory
-    services.TryAddScoped<IPluginRuntimeManagerFactory, PluginRuntimeManagerFactory>();
+    services.AddScoped<IPluginRuntimeManagerFactory, PluginRuntimeManagerFactory>();
 
-    // Register composite runtime manager
-    services.TryAddScoped<IPluginRuntimeManager, CompositePluginRuntimeManager>();
+    // Register composite runtime manager as the primary implementation
+    services.AddScoped<IPluginRuntimeManager, CompositePluginRuntimeManager>();
 
     return services;
   }
 
   /// <summary>
-  /// Adds plugin orchestration services to the service collection.
+  /// Adds plugin execution services to the service collection.
   /// </summary>
   /// <param name="services">The service collection</param>
   /// <returns>The service collection for method chaining</returns>
-  public static IServiceCollection AddPluginOrchestration(this IServiceCollection services)
+  public static IServiceCollection AddPluginExecution(this IServiceCollection services)
   {
     // Register plugin execution service
-    services.TryAddScoped<IPluginExecutionService, PluginExecutionService>();
+    services.AddScoped<IPluginExecutionService, PluginExecutionService>();
+
+    return services;
+  }
+
+  /// <summary>
+  /// Adds plugin initialization services to the service collection.
+  /// </summary>
+  /// <param name="services">The service collection</param>
+  /// <returns>The service collection for method chaining</returns>
+  public static IServiceCollection AddPluginInitialization(this IServiceCollection services)
+  {
+    // Add plugin initialization as a hosted service
+    services.AddHostedService<PluginRuntimeInitializationService>();
 
     return services;
   }
@@ -81,19 +112,32 @@ public static class PluginServiceExtensions
   {
     try
     {
-      var loggerFactory = serviceProvider.GetService<ILoggerFactory>();
-      var logger = loggerFactory?.CreateLogger(LoggerCategory);
+      var logger = serviceProvider.GetService<Microsoft.Extensions.Logging.ILogger<object>>();
       logger?.LogInformation("Validating plugin service registration...");
 
-      // ... rest of the validation logic ...
+      // Validate core services
+      var discoveryService = serviceProvider.GetRequiredService<IPluginDiscoveryService>();
+      var runtimeManagerFactory = serviceProvider.GetRequiredService<IPluginRuntimeManagerFactory>();
+      var runtimeManager = serviceProvider.GetRequiredService<IPluginRuntimeManager>();
+      var executionService = serviceProvider.GetRequiredService<IPluginExecutionService>();
+      var pluginRepository = serviceProvider.GetRequiredService<IPluginRepository>();
 
-      logger?.LogInformation("Plugin service validation completed successfully");
+      // Validate runtime managers are available
+      var runtimeManagers = runtimeManagerFactory.GetAllRuntimeManagers().ToList();
+      if (!runtimeManagers.Any())
+      {
+        logger?.LogWarning("No plugin runtime managers are registered");
+        return false;
+      }
+
+      logger?.LogInformation("Plugin service validation completed successfully. {Count} runtime managers available",
+          runtimeManagers.Count);
+
       return true;
     }
     catch (Exception ex)
     {
-      var loggerFactory = serviceProvider.GetService<ILoggerFactory>();
-      var logger = loggerFactory?.CreateLogger(LoggerCategory);
+      var logger = serviceProvider.GetService<Microsoft.Extensions.Logging.ILogger<object>>();
       logger?.LogError(ex, "Plugin service validation failed");
       return false;
     }

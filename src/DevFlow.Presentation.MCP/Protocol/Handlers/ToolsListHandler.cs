@@ -1,4 +1,5 @@
 using DevFlow.Application.Plugins;
+using DevFlow.Domain.Plugins.Enums;
 using DevFlow.Presentation.MCP.Protocol.Models;
 using Microsoft.Extensions.Logging;
 using System.Text.Json.Serialization;
@@ -25,41 +26,23 @@ public sealed class ToolsListHandler : IMcpRequestHandler
 
     try
     {
-      var plugins = await _pluginRepository.GetAllAsync(cancellationToken);
+      var tools = new List<McpTool>();
 
-      var tools = plugins
-          .Where(p => p.Status == DevFlow.Domain.Plugins.Enums.PluginStatus.Available)
-          .Select(p => new McpTool
-          {
-            Name = $"plugin_{p.Metadata.Name.ToLowerInvariant()}",
-            Description = $"{p.Metadata.Description} (Language: {p.Metadata.Language})",
-            InputSchema = new
-            {
-              type = "object",
-              properties = new
-              {
-                configuration = new
-                {
-                  type = "object",
-                  description = "Plugin configuration parameters",
-                  additionalProperties = true
-                },
-                workflowId = new
-                {
-                  type = "string",
-                  description = "Target workflow ID (optional for standalone execution)"
-                }
-              }
-            }
-          })
-          .ToList();
+      // Add dynamic plugin execution tools
+      var pluginTools = await GetPluginExecutionToolsAsync(cancellationToken);
+      tools.AddRange(pluginTools);
 
       // Add built-in workflow management tools
-      tools.AddRange(GetBuiltInTools());
+      tools.AddRange(GetWorkflowManagementTools());
+
+      // Add plugin management tools
+      tools.AddRange(GetPluginManagementTools());
 
       var response = new ToolsListResponse { Tools = tools };
 
-      _logger.LogInformation("Listed {Count} available tools", tools.Count);
+      _logger.LogInformation("Listed {Count} available tools ({PluginCount} plugin tools, {ManagementCount} management tools)",
+          tools.Count, pluginTools.Count, tools.Count - pluginTools.Count);
+
       return response;
     }
     catch (Exception ex)
@@ -69,7 +52,105 @@ public sealed class ToolsListHandler : IMcpRequestHandler
     }
   }
 
-  private static List<McpTool> GetBuiltInTools()
+  private async Task<List<McpTool>> GetPluginExecutionToolsAsync(CancellationToken cancellationToken)
+  {
+    try
+    {
+      var plugins = await _pluginRepository.GetAllAsync(cancellationToken);
+
+      return plugins
+          .Where(p => p.Status == PluginStatus.Available)
+          .Select(p => new McpTool
+          {
+            Name = $"execute_plugin_{SanitizePluginName(p.Metadata.Name)}",
+            Description = $"Execute {p.Metadata.Name} plugin - {p.Metadata.Description} (Language: {p.Metadata.Language})",
+            InputSchema = new
+            {
+              type = "object",
+              properties = new
+              {
+                inputData = new
+                {
+                  type = "object",
+                  description = "Input data to pass to the plugin",
+                  additionalProperties = true
+                },
+                executionParameters = new
+                {
+                  type = "object",
+                  description = "Execution parameters to override plugin defaults",
+                  additionalProperties = true,
+                  properties = CreateExecutionParametersSchema(p)
+                }
+              }
+            }
+          })
+          .ToList();
+    }
+    catch (Exception ex)
+    {
+      _logger.LogWarning(ex, "Failed to load plugin execution tools");
+      return new List<McpTool>();
+    }
+  }
+
+  private static object CreateExecutionParametersSchema(Domain.Plugins.Entities.Plugin plugin)
+  {
+    var schema = new Dictionary<string, object>
+    {
+      ["workingDirectory"] = new
+      {
+        type = "string",
+        description = "Working directory for plugin execution (optional)"
+      },
+      ["executionTimeout"] = new
+      {
+        type = "integer",
+        description = "Maximum execution time in seconds (default: 300)"
+      },
+      ["maxMemoryMb"] = new
+      {
+        type = "integer",
+        description = "Maximum memory usage in MB (default: 256)"
+      }
+    };
+
+    // Add plugin-specific configuration options from the plugin's default configuration
+    foreach (var configItem in plugin.Configuration)
+    {
+      schema[configItem.Key] = new
+      {
+        type = InferJsonSchemaType(configItem.Value),
+        description = $"Plugin configuration parameter: {configItem.Key}"
+      };
+    }
+
+    return schema;
+  }
+
+  private static string InferJsonSchemaType(object value)
+  {
+    return value switch
+    {
+      bool => "boolean",
+      int or long or short or byte => "integer",
+      float or double or decimal => "number",
+      string => "string",
+      Array or IEnumerable<object> => "array",
+      _ => "object"
+    };
+  }
+
+  private static string SanitizePluginName(string pluginName)
+  {
+    return pluginName
+        .ToLowerInvariant()
+        .Replace(" ", "_")
+        .Replace("-", "_")
+        .Replace(".", "_");
+  }
+
+  private static List<McpTool> GetWorkflowManagementTools()
   {
     return new List<McpTool>
         {
@@ -153,7 +234,81 @@ public sealed class ToolsListHandler : IMcpRequestHandler
         };
   }
 
-  private record ToolsListResponse
+  private static List<McpTool> GetPluginManagementTools()
+  {
+    return new List<McpTool>
+        {
+            new()
+            {
+                Name = "list_plugins",
+                Description = "List all registered plugins with their status and capabilities",
+                InputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        language = new
+                        {
+                            type = "string",
+                            description = "Filter by programming language (CSharp, TypeScript, Python)"
+                        },
+                        status = new
+                        {
+                            type = "string",
+                            description = "Filter by plugin status (Available, Error, Disabled, Registered)"
+                        }
+                    }
+                }
+            },
+            new()
+            {
+                Name = "get_plugin_capabilities",
+                Description = "Get detailed execution capabilities for a specific plugin",
+                InputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        pluginId = new { type = "string", description = "The plugin ID" }
+                    },
+                    required = new[] { "pluginId" }
+                }
+            },
+            new()
+            {
+                Name = "validate_plugin",
+                Description = "Validate that a plugin can be executed",
+                InputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        pluginId = new { type = "string", description = "The plugin ID" }
+                    },
+                    required = new[] { "pluginId" }
+                }
+            },
+            new()
+            {
+                Name = "discover_plugins",
+                Description = "Trigger manual plugin discovery (plugins are auto-discovered at startup)",
+                InputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        force = new
+                        {
+                            type = "boolean",
+                            description = "Force re-scan even if plugins haven't changed (default: false)"
+                        }
+                    }
+                }
+            }
+        };
+  }
+
+  public record ToolsListResponse
   {
     [JsonPropertyName("tools")]
     public required List<McpTool> Tools { get; init; }

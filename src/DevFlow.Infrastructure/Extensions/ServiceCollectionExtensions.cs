@@ -45,6 +45,32 @@ public static class ServiceCollectionExtensions
 
     // Register services
     services.AddScoped<IDbInitializer, DbInitializer>();
+    // Add plugin system
+    services.AddPluginSystem();
+
+    return services;
+  }
+
+  //public static IServiceCollection AddPluginSystem(this IServiceCollection services)
+  //{
+  //  return services
+  //      .AddPluginRuntime()
+  //      .AddPluginIntegration();
+  //}
+
+  private static IServiceCollection AddPluginIntegration(this IServiceCollection services)
+  {
+    // Initialize plugin runtime managers on startup
+    services.AddHostedService<PluginRuntimeInitializationService>();
+
+    // Add plugin directory configuration
+    services.Configure<PluginOptions>(options =>
+    {
+      options.PluginDirectories = new List<string> { "./plugins" };
+      options.EnableHotReload = true;
+      options.ExecutionTimeoutMs = 30000;
+      options.MaxMemoryMb = 256;
+    });
 
     return services;
   }
