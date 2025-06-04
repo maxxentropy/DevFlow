@@ -13,10 +13,10 @@
     "format_conversion"
   ],
   "dependencies": [
-    "pip:pandas>=2.0.0",
+    "pip:pandas>=2.0.0", // Remains the same, or could be pip:pandas@^2.0.0 if pip supports that and you want it
     "pip:numpy>=1.24.0",
-    "pip:jsonschema>=4.17.0",
-    "pip:openpyxl>=3.1.0",
+    "pip:jsonschema^4.17.0", // Example of using caret if pip and your resolver support it
+    "pip:openpyxl~3.1.0", // Example of using tilde
     "pip:python-dateutil>=2.8.2"
   ],
   "configuration": {

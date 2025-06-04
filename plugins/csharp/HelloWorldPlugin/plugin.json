@@ -1,8 +1,7 @@
-
 {
   "name": "HelloWorldPlugin",
   "version": "1.0.0",
-  "description": "A simple Hello World plugin to validate the DevFlow plugin system. Demonstrates basic file operations, configuration usage, and result handling.",
+  "description": "A simple Hello World plugin...",
   "language": "CSharp",
   "entryPoint": "HelloWorldPlugin.cs",
   "capabilities": [
@@ -11,8 +10,8 @@
     "configuration_access"
   ],
   "dependencies": [
-    "nuget:Newtonsoft.Json@13.0.3",
-    "file:./lib/CustomHelper.dll@1.0.0"
+    "nuget:Newtonsoft.Json@^13.0.1", // Using caret for compatible updates
+    "file:./lib/CustomHelper.dll@1.0.0" // File references usually remain exact
   ],
   "configuration": {
     "greeting": "Hello",

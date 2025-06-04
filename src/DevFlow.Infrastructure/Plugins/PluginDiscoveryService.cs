@@ -1,23 +1,25 @@
 using DevFlow.Application.Plugins.Runtime;
 using DevFlow.Application.Plugins.Runtime.Models;
 using DevFlow.Domain.Plugins.Entities;
-using DevFlow.Domain.Plugins.Enums;
+using DevFlow.Domain.Plugins.Enums; // Make sure this using is present for PluginLanguage
 using DevFlow.Domain.Plugins.ValueObjects;
 using DevFlow.SharedKernel.Results;
 using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq; // << ??????? LINQ is imported for .Contains() extension method on IEnumerable<T>
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace DevFlow.Infrastructure.Plugins;
 
-/// <summary>
-/// Concrete implementation of plugin discovery service that scans the filesystem for plugins.
-/// Handles plugin manifest parsing, validation, and plugin entity creation.
-/// </summary>
 public sealed class PluginDiscoveryService : IPluginDiscoveryService
 {
   private readonly ILogger<PluginDiscoveryService> _logger;
   private readonly JsonSerializerOptions _jsonOptions;
-
   private const string PluginManifestFileName = "plugin.json";
 
   public PluginDiscoveryService(ILogger<PluginDiscoveryService> logger)
@@ -33,8 +35,8 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
   }
 
   public async Task<Result<IReadOnlyList<PluginManifest>>> DiscoverPluginsAsync(
-      string pluginDirectoryPath,
-      CancellationToken cancellationToken = default)
+    string pluginDirectoryPath,
+    CancellationToken cancellationToken = default)
   {
     if (string.IsNullOrWhiteSpace(pluginDirectoryPath))
       return Result<IReadOnlyList<PluginManifest>>.Failure(Error.Validation(
@@ -49,32 +51,31 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
     try
     {
       var manifests = new List<PluginManifest>();
-      var pluginDirectories = Directory.GetDirectories(pluginDirectoryPath, "*", SearchOption.AllDirectories)
-          .Where(dir => File.Exists(Path.Combine(dir, PluginManifestFileName)))
-          .ToList();
+      var manifestFiles = Directory.GetFiles(pluginDirectoryPath, PluginManifestFileName, SearchOption.AllDirectories);
 
-      _logger.LogDebug("Found {Count} potential plugin directories", pluginDirectories.Count);
+      _logger.LogDebug("Found {Count} potential plugin manifest files in {PluginDirectoryPath}.", manifestFiles.Length, pluginDirectoryPath);
 
-      foreach (var directory in pluginDirectories)
+      foreach (var manifestFile in manifestFiles)
       {
         cancellationToken.ThrowIfCancellationRequested();
+        string directory = Path.GetDirectoryName(manifestFile) ?? pluginDirectoryPath;
 
         var manifestResult = await ScanPluginDirectoryAsync(directory, cancellationToken);
         if (manifestResult.IsSuccess)
         {
           manifests.Add(manifestResult.Value);
-          _logger.LogDebug("Successfully loaded plugin manifest: {PluginName} v{Version}",
-              manifestResult.Value.Name, manifestResult.Value.Version);
+          _logger.LogDebug("Successfully loaded plugin manifest: {PluginName} v{Version} from {ManifestPath}",
+              manifestResult.Value.Name, manifestResult.Value.Version, manifestFile);
         }
         else
         {
-          _logger.LogWarning("Failed to load plugin from directory {Directory}: {Error}",
-              directory, manifestResult.Error.Message);
+          _logger.LogWarning("Failed to load plugin from directory {Directory} (manifest: {ManifestPath}): {Error}",
+              directory, manifestFile, manifestResult.Error.Message);
         }
       }
 
-      _logger.LogInformation("Discovered {Count} valid plugins from {TotalDirectories} directories",
-          manifests.Count, pluginDirectories.Count);
+      _logger.LogInformation("Discovered {Count} valid plugins from {TotalManifestsFound} manifest files scanned in {PluginDirectoryPath}.",
+          manifests.Count, manifestFiles.Length, pluginDirectoryPath);
 
       return Result<IReadOnlyList<PluginManifest>>.Success(manifests.AsReadOnly());
     }
@@ -82,7 +83,7 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
     {
       _logger.LogError(ex, "Failed to discover plugins in directory: {PluginDirectory}", pluginDirectoryPath);
       return Result<IReadOnlyList<PluginManifest>>.Failure(Error.Failure(
-          "PluginDiscovery.DiscoveryFailed", $"Plugin discovery failed: {ex.Message}"));
+          "PluginDiscovery.DiscoveryFailed", $"Plugin discovery failed in '{pluginDirectoryPath}': {ex.Message}"));
     }
   }
 
@@ -94,61 +95,52 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
     if (directoryPaths is null || !directoryPaths.Any())
       return Result<IReadOnlyList<PluginManifest>>.Success(Array.Empty<PluginManifest>());
 
-    _logger.LogInformation("Discovering plugins in {Count} directories", directoryPaths.Count);
+    _logger.LogInformation("Discovering plugins in {Count} specified root directories.", directoryPaths.Count);
 
-    try
+    var allManifests = new List<PluginManifest>();
+    var errors = new List<Error>();
+
+    foreach (var path in directoryPaths)
     {
-      var discoveryTasks = directoryPaths.Select(path => DiscoverPluginsAsync(path, cancellationToken));
-      var results = await Task.WhenAll(discoveryTasks);
-
-      var allManifests = new List<PluginManifest>();
-      var errors = new List<Error>();
-
-      foreach (var result in results)
-      {
-        if (result.IsSuccess)
-          allManifests.AddRange(result.Value);
-        else
-          errors.Add(result.Error);
-      }
-
-      if (errors.Any() && !allManifests.Any())
-      {
-        var combinedError = Error.Failure(
-            "PluginDiscovery.AllDirectoriesFailed",
-            $"Failed to discover plugins in all directories. Errors: {string.Join("; ", errors.Select(e => e.Message))}");
-        return Result<IReadOnlyList<PluginManifest>>.Failure(combinedError);
-      }
-
-      if (errors.Any())
-        _logger.LogWarning("Some directories failed during discovery: {ErrorCount} errors", errors.Count);
-
-      _logger.LogInformation("Discovered {Count} total plugins from {DirectoryCount} directories",
-          allManifests.Count, directoryPaths.Count);
-
-      return Result<IReadOnlyList<PluginManifest>>.Success(allManifests.AsReadOnly());
+      cancellationToken.ThrowIfCancellationRequested();
+      var result = await DiscoverPluginsAsync(path, cancellationToken);
+      if (result.IsSuccess)
+        allManifests.AddRange(result.Value);
+      else
+        errors.Add(result.Error);
     }
-    catch (Exception ex)
+
+    if (errors.Any() && !allManifests.Any())
     {
-      _logger.LogError(ex, "Failed to discover plugins in multiple directories");
-      return Result<IReadOnlyList<PluginManifest>>.Failure(Error.Failure(
-          "PluginDiscovery.BatchDiscoveryFailed", $"Batch plugin discovery failed: {ex.Message}"));
+      var combinedError = Error.Failure(
+          "PluginDiscovery.AllDirectoriesFailed",
+          $"Failed to discover plugins in all specified directories. Errors: {string.Join("; ", errors.Select(e => $"{e.Code}: {e.Message}"))}");
+      return Result<IReadOnlyList<PluginManifest>>.Failure(combinedError);
     }
+
+    if (errors.Any())
+      _logger.LogWarning("Some directories failed during discovery: {ErrorCount} errors encountered. Details: {Errors}",
+          errors.Count, string.Join("; ", errors.Select(e => $"{e.Code}: {e.Message}")));
+
+    _logger.LogInformation("Discovered {Count} total plugins from {DirectoryCount} root directories specified.",
+        allManifests.Count, directoryPaths.Count);
+
+    return Result<IReadOnlyList<PluginManifest>>.Success(allManifests.AsReadOnly());
   }
 
   public async Task<Result<Plugin>> LoadPluginAsync(
-      PluginManifest manifest,
-      CancellationToken cancellationToken = default)
+    PluginManifest manifest,
+    CancellationToken cancellationToken = default)
   {
     if (manifest is null)
       return Result<Plugin>.Failure(Error.Validation(
           "PluginDiscovery.ManifestNull", "Plugin manifest cannot be null."));
 
-    _logger.LogDebug("Loading plugin: {PluginName} v{Version}", manifest.Name, manifest.Version);
+    _logger.LogDebug("Loading plugin from manifest: {PluginName} v{Version}", manifest.Name, manifest.Version);
 
     try
     {
-      var pluginResult = Plugin.Create(
+      var pluginCreateResult = Plugin.Create(
           manifest.Name,
           manifest.Version,
           manifest.Description,
@@ -156,22 +148,42 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
           manifest.EntryPoint,
           manifest.PluginDirectoryPath,
           manifest.Capabilities.ToList(),
-          manifest.Configuration.ToDictionary(kvp => kvp.Key, kvp => kvp.Value));
+          manifest.Configuration.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
+      );
 
-      if (pluginResult.IsFailure)
+      if (pluginCreateResult.IsFailure)
       {
-        _logger.LogWarning("Failed to create plugin entity: {Error}", pluginResult.Error.Message);
-        return pluginResult;
+        _logger.LogWarning("Failed to create plugin entity for {PluginName}: {Error}", manifest.Name, pluginCreateResult.Error.Message);
+        return pluginCreateResult;
       }
 
-      var plugin = pluginResult.Value;
+      var plugin = pluginCreateResult.Value;
 
-      // Process dependencies from manifest
-      await ProcessManifestDependenciesAsync(plugin, manifest, cancellationToken);
+      if (manifest.Dependencies.Any())
+      {
+        _logger.LogDebug("Processing {Count} dependencies for plugin: {PluginName}",
+            manifest.Dependencies.Count, manifest.Name);
 
-      _logger.LogDebug("Successfully loaded plugin: {PluginName} v{Version} with {DependencyCount} dependencies", 
+        foreach (var dependencyString in manifest.Dependencies)
+        {
+          var dependencyResult = ParseDependencyString(dependencyString);
+          if (dependencyResult.IsSuccess)
+          {
+            plugin.AddDependency(dependencyResult.Value);
+            _logger.LogTrace("Added dependency to {PluginName}: {DependencyType} {DependencyName} v{DependencyVersion}",
+                manifest.Name, dependencyResult.Value.Type, dependencyResult.Value.Name, dependencyResult.Value.Version);
+          }
+          else
+          {
+            _logger.LogWarning("Failed to parse dependency '{DependencyString}' for plugin '{PluginName}': {Error}",
+                dependencyString, manifest.Name, dependencyResult.Error.Message);
+          }
+        }
+      }
+
+      _logger.LogDebug("Successfully loaded plugin entity: {PluginName} v{Version} with {DependencyCount} dependencies specified in manifest.",
           manifest.Name, manifest.Version, plugin.Dependencies.Count);
-      
+
       return Result<Plugin>.Success(plugin);
     }
     catch (Exception ex)
@@ -182,81 +194,225 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
     }
   }
 
-  public async Task<Result<bool>> ValidateManifestAsync(
-      PluginManifest manifest,
-      CancellationToken cancellationToken = default)
+  // Method within: src/DevFlow.Infrastructure/Plugins/PluginDiscoveryService.cs
+  private static Result<PluginDependency> ParseDependencyString(string dependencyString)
   {
-    if (manifest is null)
-      return Result<bool>.Failure(Error.Validation(
-          "PluginDiscovery.ManifestNull", "Plugin manifest cannot be null."));
+    if (string.IsNullOrWhiteSpace(dependencyString))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDiscovery.EmptyDependency", "Dependency string cannot be empty."));
 
-    try
+    var parts = dependencyString.Split(new[] { ':' }, 2, StringSplitOptions.RemoveEmptyEntries);
+    if (parts.Length != 2)
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDiscovery.InvalidTypeFormat",
+          $"Invalid dependency format: '{dependencyString}'. Expected 'type:nameAndVersion'. Example: 'nuget:Newtonsoft.Json@^13.0' or 'pip:requests>=2.0'."));
+
+    var typeString = parts[0].Trim().ToLowerInvariant();
+    var nameAndVersionString = parts[1].Trim();
+
+    string name;
+    string versionSpecifier;
+
+    PluginDependencyType? dependencyType = typeString switch
     {
-      // Check if entry point file exists
-      if (!File.Exists(manifest.EntryPointPath))
-        return Result<bool>.Failure(Error.Validation(
-            "PluginDiscovery.EntryPointNotFound", $"Entry point file '{manifest.EntryPointPath}' does not exist."));
+      "nuget" => PluginDependencyType.NuGetPackage,
+      "plugin" => PluginDependencyType.Plugin,
+      "file" => PluginDependencyType.FileReference,
+      "npm" => PluginDependencyType.NpmPackage,
+      "pip" => PluginDependencyType.PipPackage,
+      _ => null
+    };
 
-      // Validate language-specific requirements
-      var languageValidation = await ValidateLanguageRequirementsAsync(manifest, cancellationToken);
-      if (languageValidation.IsFailure)
-        return languageValidation;
+    if (!dependencyType.HasValue)
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDiscovery.UnsupportedDependencyType",
+          $"Unsupported dependency type: '{typeString}'. Supported types: nuget, plugin, file, npm, pip."));
 
-      // Validate dependencies
-      foreach (var dependency in manifest.Dependencies)
-      {
-        if (string.IsNullOrWhiteSpace(dependency))
-          return Result<bool>.Failure(Error.Validation(
-              "PluginDiscovery.InvalidDependency", "Plugin dependencies cannot be null or empty."));
-      }
-
-      // Validate capabilities
-      foreach (var capability in manifest.Capabilities)
-      {
-        if (string.IsNullOrWhiteSpace(capability))
-          return Result<bool>.Failure(Error.Validation(
-              "PluginDiscovery.InvalidCapability", "Plugin capabilities cannot be null or empty."));
-      }
-
-      return Result<bool>.Success(true);
-    }
-    catch (Exception ex)
+    switch (dependencyType.Value)
     {
-      _logger.LogError(ex, "Failed to validate plugin manifest: {PluginName}", manifest.Name);
-      return Result<bool>.Failure(Error.Failure(
-          "PluginDiscovery.ValidationFailed", $"Manifest validation failed: {ex.Message}"));
+      case PluginDependencyType.PipPackage:
+        // Regex:
+        // Group 1: Package name, including optional extras like [security]
+        //          Allows: word characters, '.', '-' for the name,
+        //                  word characters, spaces, ',', '-' inside extras [...]
+        // Group 2: (Optional) The rest of the string, which is the version specifier.
+        //          This can start with typical pip operators (>=, ==, ~=) or SemVer ones (^, ~)
+        //          or just be a version number.
+        var pipMatch = Regex.Match(nameAndVersionString, @"^([\w.-]+(?:\[[\w\s,-]+\])?)\s*(.*)$");
+
+        if (pipMatch.Success && !string.IsNullOrWhiteSpace(pipMatch.Groups[1].Value))
+        {
+          name = pipMatch.Groups[1].Value.Trim();
+          versionSpecifier = pipMatch.Groups[2].Value.Trim(); // This captures everything after the name and optional space
+
+          if (string.IsNullOrEmpty(versionSpecifier))
+          {
+            versionSpecifier = "*"; // Default if only package name is provided
+          }
+        }
+        else
+        {
+          // This path should ideally not be hit if nameAndVersionString is a valid pip dependency string.
+          // This indicates a failure to even extract a basic package name.
+          return Result<PluginDependency>.Failure(Error.Validation(
+             "PluginDiscovery.InvalidPipFormat",
+             $"Invalid pip dependency format for '{nameAndVersionString}'. Could not extract a valid package name. Expected formats like 'requests>=2.0', 'package[extra]^1.0.0', or 'package'."));
+        }
+        break;
+
+      case PluginDependencyType.NpmPackage:
+        int lastAtIndex = nameAndVersionString.LastIndexOf('@');
+        if (lastAtIndex > 0 && lastAtIndex < nameAndVersionString.Length - 1)
+        {
+          name = nameAndVersionString.Substring(0, lastAtIndex).Trim();
+          versionSpecifier = nameAndVersionString.Substring(lastAtIndex + 1).Trim();
+        }
+        else if (lastAtIndex == -1 || (lastAtIndex == 0 && nameAndVersionString.Length > 1 && nameAndVersionString[0] == '@'))
+        {
+          name = nameAndVersionString.Trim();
+          versionSpecifier = "*";
+        }
+        else
+        {
+          return Result<PluginDependency>.Failure(Error.Validation(
+              "PluginDiscovery.InvalidNpmVersionFormat",
+              $"Invalid npm dependency format '{nameAndVersionString}'. Could not reliably extract package name and version specifier. Expected 'package@version' or '@scope/package@version'."));
+        }
+        break;
+
+      case PluginDependencyType.NuGetPackage:
+      case PluginDependencyType.Plugin:
+      case PluginDependencyType.FileReference:
+      default:
+        var nameVersionParts = nameAndVersionString.Split(new[] { '@' }, 2, StringSplitOptions.RemoveEmptyEntries);
+        if (nameVersionParts.Length == 2)
+        {
+          name = nameVersionParts[0].Trim();
+          versionSpecifier = nameVersionParts[1].Trim();
+        }
+        else if (nameVersionParts.Length == 1 && dependencyType == PluginDependencyType.FileReference)
+        {
+          name = nameVersionParts[0].Trim();
+          versionSpecifier = "*";
+        }
+        else
+        {
+          return Result<PluginDependency>.Failure(Error.Validation(
+              "PluginDiscovery.InvalidNameVersionFormat",
+              $"Invalid name@version format for '{nameAndVersionString}' (type: {typeString})."));
+        }
+        break;
     }
+
+    if (string.IsNullOrWhiteSpace(name))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDiscovery.NameEmpty", $"Dependency name cannot be empty for '{dependencyString}'."));
+    if (string.IsNullOrWhiteSpace(versionSpecifier))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDiscovery.VersionEmpty", $"Dependency version specifier cannot be empty for '{dependencyString}'."));
+
+    Result<PluginDependency> dependencyResult;
+    switch (dependencyType.Value)
+    {
+      case PluginDependencyType.NuGetPackage:
+        dependencyResult = PluginDependency.CreateNuGetPackage(name, versionSpecifier);
+        break;
+      case PluginDependencyType.Plugin:
+        dependencyResult = PluginDependency.CreatePluginDependency(name, versionSpecifier);
+        break;
+      case PluginDependencyType.FileReference:
+        dependencyResult = PluginDependency.CreateFileReference(name, versionSpecifier, name);
+        break;
+      case PluginDependencyType.NpmPackage:
+        dependencyResult = PluginDependency.CreateNpmPackage(name, versionSpecifier);
+        break;
+      case PluginDependencyType.PipPackage:
+        dependencyResult = PluginDependency.CreatePipPackage(name, versionSpecifier);
+        break;
+      default:
+        return Result<PluginDependency>.Failure(Error.Unexpected("PluginDiscovery.UnknownTypeReached", "Reached unknown dependency type after validation."));
+    }
+
+    if (dependencyResult.IsFailure)
+    {
+      return Result<PluginDependency>.Failure(Error.Validation(
+          dependencyResult.Error.Code,
+          $"Failed to create dependency object for '{dependencyString}': {dependencyResult.Error.Message}"
+      ));
+    }
+    return dependencyResult;
   }
 
-  public Task<Result<bool>> IsPluginModifiedAsync(
-      string pluginDirectoryPath,
-      DateTimeOffset lastScanTime,
-      CancellationToken cancellationToken = default)
+  private static object? ConvertJsonElement(JsonElement element)
   {
-    if (string.IsNullOrWhiteSpace(pluginDirectoryPath))
-      return Task.FromResult(Result<bool>.Failure(Error.Validation(
-          "PluginDiscovery.DirectoryPathEmpty", "Plugin directory path cannot be empty.")));
+    return element.ValueKind switch
+    {
+      JsonValueKind.Object => element.EnumerateObject()
+                        .ToDictionary(p => p.Name, p => ConvertJsonElement(p.Value), StringComparer.OrdinalIgnoreCase),
+      JsonValueKind.Array => element.EnumerateArray().Select(ConvertJsonElement).ToList(),
+      JsonValueKind.String => element.GetString(),
+      JsonValueKind.Number => element.TryGetInt64(out long l) ? l : element.GetDouble(),
+      JsonValueKind.True => true,
+      JsonValueKind.False => false,
+      JsonValueKind.Null => null,
+      JsonValueKind.Undefined => null,
+      _ => throw new ArgumentOutOfRangeException(nameof(element.ValueKind), $"Unsupported JsonValueKind: {element.ValueKind}")
+    };
+  }
 
-    if (!Directory.Exists(pluginDirectoryPath))
-      return Task.FromResult(Result<bool>.Failure(Error.Validation(
-          "PluginDiscovery.DirectoryNotFound", $"Plugin directory '{pluginDirectoryPath}' does not exist.")));
-
+  private Result<PluginManifest> ParseManifestData(
+      Dictionary<string, object?> manifestDataObject,
+      string pluginDirectoryPath,
+      string manifestPath)
+  {
     try
     {
-      var manifestPath = Path.Combine(pluginDirectoryPath, PluginManifestFileName);
-      if (!File.Exists(manifestPath))
-        return Task.FromResult(Result<bool>.Success(false));
+      string GetDictString(string key, string defaultVal = "") =>
+          manifestDataObject.TryGetValue(key, out var val) && val is string strVal ? strVal : defaultVal;
 
-      var lastWriteTime = File.GetLastWriteTimeUtc(manifestPath);
-      var isModified = lastWriteTime > lastScanTime.UtcDateTime;
+      List<string> GetDictStringList(string key) =>
+          manifestDataObject.TryGetValue(key, out var val) && val is List<object?> objList
+          ? objList.Select(o => o?.ToString() ?? string.Empty).Where(s => !string.IsNullOrWhiteSpace(s)).ToList()
+          : new List<string>();
 
-      return Task.FromResult(Result<bool>.Success(isModified));
+      Dictionary<string, object> GetDictObjectDictionary(string key) =>
+          manifestDataObject.TryGetValue(key, out var val) && val is Dictionary<string, object?> dictVal
+          ? dictVal.Where(kvp => kvp.Value != null).ToDictionary(kvp => kvp.Key, kvp => kvp.Value!)
+          : new Dictionary<string, object>();
+
+      var name = GetDictString("name");
+      var version = GetDictString("version");
+      var description = GetDictString("description", string.Empty);
+      var languageStr = GetDictString("language");
+      var entryPoint = GetDictString("entryPoint");
+
+      if (string.IsNullOrWhiteSpace(name)) return Result<PluginManifest>.Failure(Error.Validation("Manifest.NameMissing", "'name' is required in plugin.json."));
+      if (string.IsNullOrWhiteSpace(version)) return Result<PluginManifest>.Failure(Error.Validation("Manifest.VersionMissing", "'version' is required in plugin.json."));
+      if (string.IsNullOrWhiteSpace(languageStr)) return Result<PluginManifest>.Failure(Error.Validation("Manifest.LanguageMissing", "'language' is required in plugin.json."));
+      if (string.IsNullOrWhiteSpace(entryPoint)) return Result<PluginManifest>.Failure(Error.Validation("Manifest.EntryPointMissing", "'entryPoint' is required in plugin.json."));
+
+      if (!Enum.TryParse<PluginLanguage>(languageStr, true, out var language))
+        return Result<PluginManifest>.Failure(Error.Validation(
+            "PluginDiscovery.InvalidLanguage", $"Invalid or unsupported language: '{languageStr}'."));
+
+      var capabilities = GetDictStringList("capabilities");
+      var dependencies = GetDictStringList("dependencies");
+      var configuration = GetDictObjectDictionary("configuration");
+
+      var metadata = manifestDataObject
+          .Where(kvp => !IsReservedKey(kvp.Key) && kvp.Value != null)
+          .ToDictionary(kvp => kvp.Key, kvp => kvp.Value!);
+
+      return PluginManifest.Create(
+          name, version, description, language, entryPoint,
+          pluginDirectoryPath, manifestPath, capabilities, dependencies,
+          configuration, metadata, File.GetLastWriteTimeUtc(manifestPath));
     }
     catch (Exception ex)
     {
-      _logger.LogError(ex, "Failed to check plugin modification time: {PluginDirectory}", pluginDirectoryPath);
-      return Task.FromResult(Result<bool>.Failure(Error.Failure(
-          "PluginDiscovery.ModificationCheckFailed", $"Failed to check modification time: {ex.Message}")));
+      _logger.LogError(ex, "Error parsing manifest data from {ManifestPath}", manifestPath);
+      return Result<PluginManifest>.Failure(Error.Validation(
+          "PluginDiscovery.ManifestDataParseError", $"Failed to parse manifest data from '{manifestPath}': {ex.Message}"));
     }
   }
 
@@ -266,297 +422,216 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
   {
     if (string.IsNullOrWhiteSpace(pluginDirectoryPath))
       return Result<PluginManifest>.Failure(Error.Validation(
-          "PluginDiscovery.DirectoryPathEmpty", "Plugin directory path cannot be empty."));
+          "PluginDiscovery.ScanDir.PathEmpty", "Plugin directory path cannot be empty."));
 
     if (!Directory.Exists(pluginDirectoryPath))
       return Result<PluginManifest>.Failure(Error.Validation(
-          "PluginDiscovery.DirectoryNotFound", $"Plugin directory '{pluginDirectoryPath}' does not exist."));
+          "PluginDiscovery.ScanDir.NotFound", $"Plugin directory '{pluginDirectoryPath}' does not exist."));
 
     var manifestPath = Path.Combine(pluginDirectoryPath, PluginManifestFileName);
     if (!File.Exists(manifestPath))
       return Result<PluginManifest>.Failure(Error.Validation(
-          "PluginDiscovery.ManifestNotFound", $"Plugin manifest file not found at '{manifestPath}'."));
+          "PluginDiscovery.ScanDir.ManifestMissing", $"Plugin manifest file ('{PluginManifestFileName}') not found at '{pluginDirectoryPath}'."));
 
     try
     {
       var manifestJson = await File.ReadAllTextAsync(manifestPath, cancellationToken);
-      var manifestData = JsonSerializer.Deserialize<Dictionary<string, object>>(manifestJson, _jsonOptions);
+      var manifestJsonElements = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(manifestJson, _jsonOptions);
 
-      if (manifestData is null)
+      if (manifestJsonElements is null)
         return Result<PluginManifest>.Failure(Error.Validation(
-            "PluginDiscovery.InvalidManifestFormat", "Plugin manifest file contains invalid JSON."));
+            "PluginDiscovery.ScanDir.InvalidFormat", $"Plugin manifest file '{manifestPath}' contains invalid JSON or is empty."));
 
-      var parseResult = ParseManifestData(manifestData, pluginDirectoryPath, manifestPath);
-      return parseResult;
+      var manifestDataObject = manifestJsonElements.ToDictionary(
+          kvp => kvp.Key,
+          kvp => ConvertJsonElement(kvp.Value),
+          StringComparer.OrdinalIgnoreCase
+      );
+
+      return ParseManifestData(manifestDataObject, pluginDirectoryPath, manifestPath);
     }
     catch (JsonException ex)
     {
-      _logger.LogWarning("Invalid JSON in plugin manifest: {ManifestPath}. Error: {Error}", manifestPath, ex.Message);
+      _logger.LogWarning(ex, "Invalid JSON in plugin manifest: {ManifestPath}", manifestPath);
       return Result<PluginManifest>.Failure(Error.Validation(
-          "PluginDiscovery.InvalidJson", $"Invalid JSON in manifest file: {ex.Message}"));
+          "PluginDiscovery.ScanDir.InvalidJson", $"Invalid JSON in manifest file '{manifestPath}': {ex.Message}"));
     }
     catch (Exception ex)
     {
       _logger.LogError(ex, "Failed to scan plugin directory: {PluginDirectory}", pluginDirectoryPath);
       return Result<PluginManifest>.Failure(Error.Failure(
-          "PluginDiscovery.ScanFailed", $"Failed to scan plugin directory: {ex.Message}"));
+          "PluginDiscovery.ScanDir.ScanFailed", $"Failed to scan plugin directory '{pluginDirectoryPath}': {ex.Message}"));
     }
   }
 
-  private Result<PluginManifest> ParseManifestData(
-      Dictionary<string, object> manifestData,
-      string pluginDirectoryPath,
-      string manifestPath)
+  // CORRECTED METHOD
+  private static bool IsReservedKey(string key)
   {
+    var reservedKeys = new[] { "name", "version", "description", "language", "entryPoint", "capabilities", "dependencies", "configuration" };
+    // Use LINQ Contains with a StringComparer for case-insensitive check
+    return reservedKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
+  }
+
+  public async Task<Result<bool>> ValidateManifestAsync(
+    PluginManifest manifest,
+    CancellationToken cancellationToken = default)
+  {
+    if (manifest is null)
+      return Result<bool>.Failure(Error.Validation(
+          "PluginDiscovery.ManifestNull", "Plugin manifest cannot be null."));
+
     try
     {
-      var name = GetStringValue(manifestData, "name");
-      var version = GetStringValue(manifestData, "version");
-      var description = GetStringValue(manifestData, "description", string.Empty);
-      var languageStr = GetStringValue(manifestData, "language");
-      var entryPoint = GetStringValue(manifestData, "entryPoint");
+      var errors = new List<string>();
 
-      if (!Enum.TryParse<PluginLanguage>(languageStr, true, out var language))
-        return Result<PluginManifest>.Failure(Error.Validation(
-            "PluginDiscovery.InvalidLanguage", $"Invalid or unsupported language: '{languageStr}'."));
+      if (string.IsNullOrWhiteSpace(manifest.Name)) errors.Add("Manifest 'name' is missing or empty.");
+      if (string.IsNullOrWhiteSpace(manifest.Version)) errors.Add("Manifest 'version' is missing or empty.");
+      if (string.IsNullOrWhiteSpace(manifest.EntryPoint)) errors.Add("Manifest 'entryPoint' is missing or empty.");
+      else if (!File.Exists(manifest.EntryPointPath)) errors.Add($"Entry point file '{manifest.EntryPointPath}' does not exist.");
 
-      var capabilities = GetStringArray(manifestData, "capabilities");
-      var dependencies = GetStringArray(manifestData, "dependencies");
-      var configuration = GetObjectDictionary(manifestData, "configuration");
-      var metadata = manifestData.Where(kvp => !IsReservedKey(kvp.Key))
-          .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+      var langValidationResult = ValidateLanguageRequirements(manifest);
+      if (langValidationResult.IsFailure) errors.Add(langValidationResult.Error.Message);
 
-      return PluginManifest.Create(
-          name, version, description, language, entryPoint,
-          pluginDirectoryPath, manifestPath, capabilities, dependencies,
-          configuration, metadata);
+      if (manifest.Dependencies != null)
+      {
+        foreach (var depString in manifest.Dependencies)
+        {
+          if (string.IsNullOrWhiteSpace(depString))
+          {
+            errors.Add("An empty or whitespace dependency string was found.");
+            continue;
+          }
+          var parsedDep = ParseDependencyString(depString);
+          if (parsedDep.IsFailure) errors.Add($"Invalid dependency '{depString}': {parsedDep.Error.Message}");
+        }
+      }
+
+      if (errors.Any())
+      {
+        string combinedErrors = string.Join("; ", errors);
+        _logger.LogWarning("Plugin manifest validation failed for {PluginName}: {Errors}", manifest.Name, combinedErrors);
+        return Result<bool>.Failure(Error.Validation("PluginDiscovery.InvalidManifest", combinedErrors));
+      }
+
+      return Result<bool>.Success(true);
     }
     catch (Exception ex)
     {
-      return Result<PluginManifest>.Failure(Error.Validation(
-          "PluginDiscovery.ManifestParseError", $"Failed to parse manifest data: {ex.Message}"));
+      _logger.LogError(ex, "Exception during plugin manifest validation: {PluginName}", manifest.Name);
+      return Result<bool>.Failure(Error.Failure(
+          "PluginDiscovery.ManifestValidationException", $"Manifest validation failed with exception: {ex.Message}"));
     }
   }
 
-  private Task<Result<bool>> ValidateLanguageRequirementsAsync(
-      PluginManifest manifest,
-      CancellationToken cancellationToken)
+  private Result<bool> ValidateLanguageRequirements(PluginManifest manifest)
   {
-    var result = manifest.Language switch
+    return manifest.Language switch
     {
       PluginLanguage.CSharp => ValidateCSharpPlugin(manifest),
       PluginLanguage.TypeScript => ValidateTypeScriptPlugin(manifest),
       PluginLanguage.Python => ValidatePythonPlugin(manifest),
       _ => Result<bool>.Failure(Error.Validation(
-          "PluginDiscovery.UnsupportedLanguage", $"Language '{manifest.Language}' is not supported."))
+          "PluginDiscovery.UnsupportedLanguage", $"Language '{manifest.Language}' is not supported by manifest validation."))
     };
-
-    return Task.FromResult(result);
   }
-
   private Result<bool> ValidateCSharpPlugin(PluginManifest manifest)
   {
-    var entryPointPath = manifest.EntryPointPath;
-    if (!entryPointPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+    if (!manifest.EntryPoint.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
       return Result<bool>.Failure(Error.Validation(
           "PluginDiscovery.InvalidCSharpEntryPoint", "C# plugin entry point must be a .cs file."));
-
     return Result<bool>.Success(true);
   }
 
   private Result<bool> ValidateTypeScriptPlugin(PluginManifest manifest)
   {
-    var entryPointPath = manifest.EntryPointPath;
-    if (!entryPointPath.EndsWith(".ts", StringComparison.OrdinalIgnoreCase) &&
-        !entryPointPath.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
+    if (!manifest.EntryPoint.EndsWith(".ts", StringComparison.OrdinalIgnoreCase) &&
+        !manifest.EntryPoint.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
       return Result<bool>.Failure(Error.Validation(
           "PluginDiscovery.InvalidTypeScriptEntryPoint", "TypeScript plugin entry point must be a .ts or .js file."));
-
-    var packageJsonPath = Path.Combine(manifest.PluginDirectoryPath, "package.json");
-    if (!File.Exists(packageJsonPath))
-      _logger.LogWarning("TypeScript plugin '{PluginName}' does not have a package.json file", manifest.Name);
-
     return Result<bool>.Success(true);
   }
 
   private Result<bool> ValidatePythonPlugin(PluginManifest manifest)
   {
-    var entryPointPath = manifest.EntryPointPath;
-    if (!entryPointPath.EndsWith(".py", StringComparison.OrdinalIgnoreCase))
+    if (!manifest.EntryPoint.EndsWith(".py", StringComparison.OrdinalIgnoreCase))
       return Result<bool>.Failure(Error.Validation(
           "PluginDiscovery.InvalidPythonEntryPoint", "Python plugin entry point must be a .py file."));
-
     return Result<bool>.Success(true);
   }
 
-  private static string GetStringValue(Dictionary<string, object> data, string key, string defaultValue = "")
+  public Task<Result<bool>> IsPluginModifiedAsync(
+    string pluginDirectoryPath,
+    DateTimeOffset lastScanTime,
+    CancellationToken cancellationToken = default)
   {
-    return data.TryGetValue(key, out var value) ? value?.ToString() ?? defaultValue : defaultValue;
-  }
+    if (string.IsNullOrWhiteSpace(pluginDirectoryPath))
+      return Task.FromResult(Result<bool>.Failure(Error.Validation(
+          "PluginDiscovery.DirEmptyModCheck", "Plugin directory path cannot be empty for modification check.")));
 
-  private static List<string> GetStringArray(Dictionary<string, object> data, string key)
-  {
-    if (!data.TryGetValue(key, out var value) || value is not JsonElement element)
-      return new List<string>();
-
-    if (element.ValueKind != JsonValueKind.Array)
-      return new List<string>();
-
-    return element.EnumerateArray()
-        .Where(item => item.ValueKind == JsonValueKind.String)
-        .Select(item => item.GetString()!)
-        .Where(str => !string.IsNullOrWhiteSpace(str))
-        .ToList();
-  }
-
-  private static Dictionary<string, object> GetObjectDictionary(Dictionary<string, object> data, string key)
-  {
-    if (!data.TryGetValue(key, out var value) || value is not JsonElement element)
-      return new Dictionary<string, object>();
-
-    if (element.ValueKind != JsonValueKind.Object)
-      return new Dictionary<string, object>();
-
-    var result = new Dictionary<string, object>();
-    foreach (var property in element.EnumerateObject())
-    {
-      result[property.Name] = ConvertJsonElement(property.Value);
-    }
-
-    return result;
-  }
-
-  private static object ConvertJsonElement(JsonElement element)
-  {
-    return element.ValueKind switch
-    {
-      JsonValueKind.String => element.GetString()!,
-      JsonValueKind.Number => element.TryGetInt32(out var intValue) ? intValue : element.GetDouble(),
-      JsonValueKind.True => true,
-      JsonValueKind.False => false,
-      JsonValueKind.Null => null!,
-      JsonValueKind.Array => element.EnumerateArray().Select(ConvertJsonElement).ToArray(),
-      JsonValueKind.Object => element.EnumerateObject().ToDictionary(p => p.Name, p => ConvertJsonElement(p.Value)),
-      _ => element.ToString()
-    };
-  }
-
-  private static bool IsReservedKey(string key)
-  {
-    var reservedKeys = new[] { "name", "version", "description", "language", "entryPoint", "capabilities", "dependencies", "configuration" };
-    return reservedKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
-  }
-
-  /// <summary>
-  /// Processes dependency declarations from the plugin manifest and adds them to the plugin entity.
-  /// </summary>
-  private async Task ProcessManifestDependenciesAsync(
-      Plugin plugin,
-      PluginManifest manifest,
-      CancellationToken cancellationToken)
-  {
-    if (!manifest.Dependencies.Any())
-      return;
-
-    _logger.LogDebug("Processing {Count} dependencies for plugin: {PluginName}", 
-        manifest.Dependencies.Count, manifest.Name);
-
-    foreach (var dependencyString in manifest.Dependencies)
-    {
-      try
-      {
-        var dependencyResult = ParseDependencyString(dependencyString);
-        if (dependencyResult.IsSuccess)
-        {
-          plugin.AddDependency(dependencyResult.Value);
-          _logger.LogDebug("Added dependency: {DependencyType} {DependencyName} v{Version}",
-              dependencyResult.Value.Type, dependencyResult.Value.Name, dependencyResult.Value.Version);
-        }
-        else
-        {
-          _logger.LogWarning("Failed to parse dependency '{Dependency}' for plugin '{PluginName}': {Error}",
-              dependencyString, manifest.Name, dependencyResult.Error.Message);
-        }
-      }
-      catch (Exception ex)
-      {
-        _logger.LogWarning(ex, "Error processing dependency '{Dependency}' for plugin '{PluginName}'",
-            dependencyString, manifest.Name);
-      }
-    }
-  }
-
-  /// <summary>
-  /// Parses a dependency string from the manifest into a PluginDependency value object.
-  /// Supports formats:
-  /// - "nuget:PackageName@1.0.0"
-  /// - "plugin:PluginName@>=1.0.0"
-  /// - "file:./lib/mylib.dll@1.0.0"
-  /// </summary>
-  private static Result<PluginDependency> ParseDependencyString(string dependencyString)
-  {
-    if (string.IsNullOrWhiteSpace(dependencyString))
-      return Result<PluginDependency>.Failure(Error.Validation(
-          "PluginDiscovery.EmptyDependency", "Dependency string cannot be empty."));
-
-    var parts = dependencyString.Split(':', 2);
-    if (parts.Length != 2)
-      return Result<PluginDependency>.Failure(Error.Validation(
-          "PluginDiscovery.InvalidDependencyFormat", 
-          $"Invalid dependency format: '{dependencyString}'. Expected format: 'type:name@version'."));
-
-    var typeString = parts[0].Trim();
-    var nameVersionString = parts[1].Trim();
-
-    var nameVersionParts = nameVersionString.Split('@', 2);
-    if (nameVersionParts.Length != 2)
-      return Result<PluginDependency>.Failure(Error.Validation(
-          "PluginDiscovery.InvalidDependencyFormat", 
-          $"Invalid dependency format: '{dependencyString}'. Expected format: 'type:name@version'."));
-
-    var name = nameVersionParts[0].Trim();
-    var version = nameVersionParts[1].Trim();
-
-    if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(version))
-      return Result<PluginDependency>.Failure(Error.Validation(
-          "PluginDiscovery.InvalidDependencyFormat", 
-          "Dependency name and version cannot be empty."));
-
-    var dependencyType = typeString.ToLowerInvariant() switch
-    {
-      "nuget" => PluginDependencyType.NuGetPackage,
-      "plugin" => PluginDependencyType.Plugin,
-      "file" => PluginDependencyType.FileReference,
-      _ => (PluginDependencyType?)null
-    };
-
-    if (!dependencyType.HasValue)
-      return Result<PluginDependency>.Failure(Error.Validation(
-          "PluginDiscovery.UnsupportedDependencyType", 
-          $"Unsupported dependency type: '{typeString}'. Supported types: nuget, plugin, file."));
-
-    // For file references, the name is actually the path
-    var source = dependencyType == PluginDependencyType.FileReference ? name : null;
+    if (!Directory.Exists(pluginDirectoryPath))
+      return Task.FromResult(Result<bool>.Success(true));
 
     try
     {
-      var dependency = dependencyType.Value switch
-      {
-        PluginDependencyType.NuGetPackage => PluginDependency.CreateNuGetPackage(name, version, source),
-        PluginDependencyType.Plugin => PluginDependency.CreatePluginDependency(name, version),
-        PluginDependencyType.FileReference => PluginDependency.CreateFileReference(name, version, source ?? name),
-        _ => Result<PluginDependency>.Failure(Error.Validation(
-            "PluginDiscovery.UnsupportedDependencyType", 
-            $"Unsupported dependency type: {dependencyType.Value}"))
-      };
+      var manifestPath = Path.Combine(pluginDirectoryPath, PluginManifestFileName);
+      if (!File.Exists(manifestPath))
+        return Task.FromResult(Result<bool>.Success(true));
 
-      return dependency;
+      var lastWriteTimeManifest = File.GetLastWriteTimeUtc(manifestPath);
+      if (lastWriteTimeManifest > lastScanTime.UtcDateTime)
+        return Task.FromResult(Result<bool>.Success(true));
+
+      var entryPointName = GetEntryPointFromManifest(manifestPath); // Helper method from previous response
+      if (!string.IsNullOrWhiteSpace(entryPointName))
+      {
+        var entryPointPath = Path.Combine(pluginDirectoryPath, entryPointName);
+        if (File.Exists(entryPointPath) && File.GetLastWriteTimeUtc(entryPointPath) > lastScanTime.UtcDateTime)
+          return Task.FromResult(Result<bool>.Success(true));
+      }
+
+      // More comprehensive check: any file modification in the directory.
+      // This can be slow for large directories. Consider if this level of detail is needed.
+      var files = Directory.GetFiles(pluginDirectoryPath, "*.*", SearchOption.AllDirectories);
+      foreach (var file in files)
+      {
+        if (File.GetLastWriteTimeUtc(file) > lastScanTime.UtcDateTime)
+          return Task.FromResult(Result<bool>.Success(true));
+      }
+
+      return Task.FromResult(Result<bool>.Success(false));
     }
     catch (Exception ex)
     {
-      return Result<PluginDependency>.Failure(Error.Validation(
-          "PluginDiscovery.DependencyCreationFailed", 
-          $"Failed to create dependency: {ex.Message}"));
+      _logger.LogError(ex, "Failed to check plugin modification time: {PluginDirectory}", pluginDirectoryPath);
+      return Task.FromResult(Result<bool>.Failure(Error.Failure(
+          "PluginDiscovery.ModCheckFailed", $"Failed to check modification time for '{pluginDirectoryPath}': {ex.Message}")));
     }
+  }
+
+  private string? GetEntryPointFromManifest(string manifestPath)
+  {
+    try
+    {
+      if (!File.Exists(manifestPath)) return null;
+      var manifestJson = File.ReadAllText(manifestPath);
+      // Using JsonDocument for a more direct and potentially safer parsing of a single property
+      using (JsonDocument doc = JsonDocument.Parse(manifestJson))
+      {
+        if (doc.RootElement.TryGetProperty("entryPoint", out JsonElement entryPointElement) &&
+            entryPointElement.ValueKind == JsonValueKind.String)
+        {
+          return entryPointElement.GetString();
+        }
+      }
+    }
+    catch (JsonException jEx)
+    {
+      _logger.LogWarning(jEx, "JSON parsing error while trying to get entryPoint from manifest {ManifestPath} for modification check.", manifestPath);
+    }
+    catch (Exception ex)
+    {
+      _logger.LogWarning(ex, "Could not read entryPoint from manifest {ManifestPath} for modification check.", manifestPath);
+    }
+    return null;
   }
 }

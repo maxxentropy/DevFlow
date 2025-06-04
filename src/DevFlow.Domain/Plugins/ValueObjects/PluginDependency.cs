@@ -1,7 +1,43 @@
 using DevFlow.SharedKernel.ValueObjects;
 using DevFlow.SharedKernel.Results;
+using System.Text.RegularExpressions;
+using System.Linq; // Required for Enumerable.All
+using System.Collections.Generic; // Required for IEnumerable
+using System; // Required for System.Version and StringComparison
+
 
 namespace DevFlow.Domain.Plugins.ValueObjects;
+
+/// <summary>
+/// Represents the type of plugin dependency.
+/// </summary>
+public enum PluginDependencyType
+{
+  /// <summary>
+  /// A NuGet package dependency.
+  /// </summary>
+  NuGetPackage,
+
+  /// <summary>
+  /// A dependency on another plugin.
+  /// </summary>
+  Plugin,
+
+  /// <summary>
+  /// A file reference dependency (assembly, DLL, etc.).
+  /// </summary>
+  FileReference,
+
+  /// <summary>
+  /// An NPM package dependency for TypeScript/JavaScript plugins.
+  /// </summary>
+  NpmPackage,
+
+  /// <summary>
+  /// A PIP package dependency for Python plugins.
+  /// </summary>
+  PipPackage
+}
 
 /// <summary>
 /// Represents a plugin dependency with version constraints and metadata.
@@ -9,226 +45,222 @@ namespace DevFlow.Domain.Plugins.ValueObjects;
 /// </summary>
 public sealed class PluginDependency : ValueObject
 {
-    private PluginDependency(string name, string version, PluginDependencyType type, string? source = null)
+  private PluginDependency(string name, string version, PluginDependencyType type, string? source = null)
+  {
+    Name = name;
+    Version = version; // Stores the full version specifier, e.g., "^1.0.0", ">=2.1.0", "1.2.3"
+    Type = type;
+    Source = source; // For FileReference, this is the path. For NuGet, optional feed.
+  }
+
+  public string Name { get; }
+  public string Version { get; } // Full version specifier
+  public PluginDependencyType Type { get; }
+  public string? Source { get; }
+
+  public static Result<PluginDependency> CreateNuGetPackage(string packageName, string version, string? source = null)
+  {
+    if (string.IsNullOrWhiteSpace(packageName))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDependency.PackageNameEmpty", "NuGet package name cannot be empty."));
+    if (string.IsNullOrWhiteSpace(version))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDependency.VersionEmpty", "Package version specifier cannot be empty."));
+    if (!IsValidNuGetPackageName(packageName)) // Renamed for clarity
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDependency.InvalidPackageName", $"Package name '{packageName}' is not a valid NuGet package name."));
+    return Result<PluginDependency>.Success(new PluginDependency(packageName.Trim(), version.Trim(), PluginDependencyType.NuGetPackage, source?.Trim()));
+  }
+
+  public static Result<PluginDependency> CreatePluginDependency(string pluginName, string version)
+  {
+    if (string.IsNullOrWhiteSpace(pluginName))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDependency.PluginNameEmpty", "Plugin name cannot be empty."));
+    if (string.IsNullOrWhiteSpace(version))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDependency.VersionEmpty", "Plugin version specifier cannot be empty."));
+    return Result<PluginDependency>.Success(new PluginDependency(pluginName.Trim(), version.Trim(), PluginDependencyType.Plugin));
+  }
+
+  public static Result<PluginDependency> CreateFileReference(string logicalName, string version, string filePath)
+  {
+    if (string.IsNullOrWhiteSpace(logicalName))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDependency.FileNameEmpty", "File reference logical name cannot be empty."));
+    if (string.IsNullOrWhiteSpace(version))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDependency.VersionEmpty", "File version specifier cannot be empty."));
+    if (string.IsNullOrWhiteSpace(filePath))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDependency.FilePathEmpty", "File path (source) cannot be empty for file reference."));
+    // 'logicalName' is the key, 'filePath' is stored in Source.
+    return Result<PluginDependency>.Success(new PluginDependency(logicalName.Trim(), version.Trim(), PluginDependencyType.FileReference, filePath.Trim()));
+  }
+
+  public static Result<PluginDependency> CreateNpmPackage(string packageName, string version)
+  {
+    if (string.IsNullOrWhiteSpace(packageName))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDependency.NpmPackageNameEmpty", "NPM package name cannot be empty."));
+    // NPM version can be complex (tags, git URLs), allow broad specifier, validation happens during 'npm install'
+    if (string.IsNullOrWhiteSpace(version))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDependency.NpmVersionEmpty", "NPM package version specifier cannot be empty."));
+    return Result<PluginDependency>.Success(new PluginDependency(packageName.Trim(), version.Trim(), PluginDependencyType.NpmPackage));
+  }
+
+  public static Result<PluginDependency> CreatePipPackage(string packageName, string versionSpecifier)
+  {
+    if (string.IsNullOrWhiteSpace(packageName))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDependency.PipPackageNameEmpty", "Pip package name cannot be empty."));
+    // Pip version specifier can be empty (latest), or like >=1.0, ==1.0 etc.
+    if (string.IsNullOrWhiteSpace(versionSpecifier)) // Allow empty, meaning "any" or "latest"
+      versionSpecifier = "*"; // Normalize empty to "*" for IsVersionSatisfied
+    return Result<PluginDependency>.Success(new PluginDependency(packageName.Trim(), versionSpecifier.Trim(), PluginDependencyType.PipPackage));
+  }
+
+
+  public bool MatchesName(string name) =>
+      string.Equals(Name, name, StringComparison.OrdinalIgnoreCase);
+
+  public bool IsVersionSatisfied(string availableVersionString)
+  {
+    if (string.IsNullOrWhiteSpace(availableVersionString)) return false;
+    // Handle wildcards universally
+    if (Version == "*" || Version == "latest" || string.IsNullOrWhiteSpace(Version))
+      return true;
+
+    if (!System.Version.TryParse(availableVersionString, out var availableVersion))
     {
-        Name = name;
-        Version = version;
-        Type = type;
-        Source = source;
+      // If availableVersionString is not a simple x.y.z, it might be a pre-release.
+      // System.Version parsing is limited for full SemVer.
+      // For this example, if it's not parsable by System.Version, we consider it non-matching
+      // unless the specifier is also non-standard in a way we handle (e.g. direct string match for some npm tags)
+      // A full SemVer library would be better here.
+      return Version.Equals(availableVersionString, StringComparison.OrdinalIgnoreCase); // Fallback to exact match for complex strings
     }
 
-    /// <summary>
-    /// Gets the dependency name (e.g., package name, plugin name, file name).
-    /// </summary>
-    public string Name { get; private set; }
 
-    /// <summary>
-    /// Gets the version constraint (e.g., "1.0.0", ">= 2.0.0", "[1.0.0, 2.0.0)").
-    /// </summary>
-    public string Version { get; private set; }
-
-    /// <summary>
-    /// Gets the type of dependency.
-    /// </summary>
-    public PluginDependencyType Type { get; private set; }
-
-    /// <summary>
-    /// Gets the optional source location (e.g., NuGet feed URL, file path).
-    /// </summary>
-    public string? Source { get; private set; }
-
-    /// <summary>
-    /// Creates a NuGet package dependency.
-    /// </summary>
-    /// <param name="packageName">The NuGet package name</param>
-    /// <param name="version">The version constraint</param>
-    /// <param name="source">Optional NuGet feed source</param>
-    /// <returns>A result containing the dependency or validation errors</returns>
-    public static Result<PluginDependency> CreateNuGetPackage(string packageName, string version, string? source = null)
+    try
     {
-        if (string.IsNullOrWhiteSpace(packageName))
-            return Result<PluginDependency>.Failure(Error.Validation(
-                "PluginDependency.PackageNameEmpty", "NuGet package name cannot be empty."));
+      string versionSpecifier = Version;
 
-        if (string.IsNullOrWhiteSpace(version))
-            return Result<PluginDependency>.Failure(Error.Validation(
-                "PluginDependency.VersionEmpty", "Package version cannot be empty."));
+      if (versionSpecifier.StartsWith("^"))
+      {
+        var versionPart = versionSpecifier.Substring(1);
+        if (!System.Version.TryParse(versionPart, out var specifiedCaretVersion)) return false;
+        if (availableVersion < specifiedCaretVersion) return false;
+        if (specifiedCaretVersion.Major != 0)
+          return availableVersion.Major == specifiedCaretVersion.Major;
+        if (specifiedCaretVersion.Minor != 0)
+          return availableVersion.Major == 0 && availableVersion.Minor == specifiedCaretVersion.Minor;
+        return availableVersion.Major == 0 && availableVersion.Minor == 0 && availableVersion.Build == specifiedCaretVersion.Build;
+      }
 
-        // Validate package name format (basic validation)
-        if (!IsValidPackageName(packageName))
-            return Result<PluginDependency>.Failure(Error.Validation(
-                "PluginDependency.InvalidPackageName", 
-                $"Package name '{packageName}' is not a valid NuGet package name."));
+      if (versionSpecifier.StartsWith("~")) // Includes `~=` (PEP 440 for pip) if we treat them similarly
+      {
+        var versionPart = versionSpecifier.StartsWith("~=") ? versionSpecifier.Substring(2) : versionSpecifier.Substring(1);
+        if (!System.Version.TryParse(versionPart, out var specifiedTildeVersion)) return false;
+        if (availableVersion < specifiedTildeVersion) return false;
+        // ~1.2.3 allows patch (1.2.x) -> available < 1.3.0
+        // ~1.2 allows patch (1.2.x) -> available < 1.3.0
+        // ~1 allows minor (1.x) -> available < 2.0.0
+        if (specifiedTildeVersion.Build != -1) // ~1.2.3
+          return availableVersion.Major == specifiedTildeVersion.Major && availableVersion.Minor == specifiedTildeVersion.Minor;
+        if (specifiedTildeVersion.Minor != -1) // ~1.2
+          return availableVersion.Major == specifiedTildeVersion.Major && availableVersion.Minor == specifiedTildeVersion.Minor;
+        // ~1
+        return availableVersion.Major == specifiedTildeVersion.Major;
+      }
 
-        return Result<PluginDependency>.Success(new PluginDependency(
-            packageName.Trim(), 
-            version.Trim(), 
-            PluginDependencyType.NuGetPackage, 
-            source?.Trim()));
+      if (versionSpecifier.StartsWith(">="))
+      {
+        var versionPart = versionSpecifier.Substring(2);
+        if (!System.Version.TryParse(versionPart, out var minVersion)) return false;
+        return availableVersion >= minVersion;
+      }
+
+      if (versionSpecifier.StartsWith(">"))
+      {
+        var versionPart = versionSpecifier.Substring(1);
+        if (!System.Version.TryParse(versionPart, out var exclusiveMinVersion)) return false;
+        return availableVersion > exclusiveMinVersion;
+      }
+
+      if (versionSpecifier.StartsWith("<="))
+      {
+        var versionPart = versionSpecifier.Substring(2);
+        if (!System.Version.TryParse(versionPart, out var maxVersion)) return false;
+        return availableVersion <= maxVersion;
+      }
+
+      if (versionSpecifier.StartsWith("<"))
+      {
+        var versionPart = versionSpecifier.Substring(1);
+        if (!System.Version.TryParse(versionPart, out var exclusiveMaxVersion)) return false;
+        return availableVersion < exclusiveMaxVersion;
+      }
+      if (versionSpecifier.StartsWith("==")) // Common in pip
+      {
+        var versionPart = versionSpecifier.Substring(2);
+        if (!System.Version.TryParse(versionPart, out var exactPipVersion)) return false;
+        return availableVersion == exactPipVersion;
+      }
+      if (versionSpecifier.StartsWith("!=")) // Common in pip
+      {
+        var versionPart = versionSpecifier.Substring(2);
+        if (!System.Version.TryParse(versionPart, out var notEqualVersion)) return false;
+        return availableVersion != notEqualVersion;
+      }
+
+
+      // Exact version match (default if no operator or if System.Version.TryParse succeeds)
+      if (System.Version.TryParse(versionSpecifier, out var exactVersion))
+      {
+        return availableVersion == exactVersion;
+      }
+
+      // Fallback for non-standard versions or tags (e.g., npm "latest", "next")
+      // This is a simplistic check; real npm/pip tag resolution is more complex.
+      return versionSpecifier.Equals(availableVersionString, StringComparison.OrdinalIgnoreCase);
     }
-
-    /// <summary>
-    /// Creates a plugin-to-plugin dependency.
-    /// </summary>
-    /// <param name="pluginName">The target plugin name</param>
-    /// <param name="version">The version constraint</param>
-    /// <returns>A result containing the dependency or validation errors</returns>
-    public static Result<PluginDependency> CreatePluginDependency(string pluginName, string version)
+    catch
     {
-        if (string.IsNullOrWhiteSpace(pluginName))
-            return Result<PluginDependency>.Failure(Error.Validation(
-                "PluginDependency.PluginNameEmpty", "Plugin name cannot be empty."));
-
-        if (string.IsNullOrWhiteSpace(version))
-            return Result<PluginDependency>.Failure(Error.Validation(
-                "PluginDependency.VersionEmpty", "Plugin version cannot be empty."));
-
-        return Result<PluginDependency>.Success(new PluginDependency(
-            pluginName.Trim(), 
-            version.Trim(), 
-            PluginDependencyType.Plugin));
+      return false;
     }
+  }
 
-    /// <summary>
-    /// Creates a file reference dependency.
-    /// </summary>
-    /// <param name="fileName">The file name or assembly name</param>
-    /// <param name="version">The version constraint</param>
-    /// <param name="filePath">The path to the file</param>
-    /// <returns>A result containing the dependency or validation errors</returns>
-    public static Result<PluginDependency> CreateFileReference(string fileName, string version, string filePath)
+  public string GetDescription()
+  {
+    var typeDescription = Type switch
     {
-        if (string.IsNullOrWhiteSpace(fileName))
-            return Result<PluginDependency>.Failure(Error.Validation(
-                "PluginDependency.FileNameEmpty", "File name cannot be empty."));
+      PluginDependencyType.NuGetPackage => "NuGet Package",
+      PluginDependencyType.Plugin => "Plugin",
+      PluginDependencyType.FileReference => "File Reference",
+      PluginDependencyType.NpmPackage => "NPM Package",
+      PluginDependencyType.PipPackage => "Pip Package",
+      _ => "Unknown"
+    };
+    var sourceInfo = Type == PluginDependencyType.FileReference && !string.IsNullOrWhiteSpace(Source) ? $" (Path: {Source})" : "";
+    return $"{typeDescription}: {Name} Version: {Version}{sourceInfo}";
+  }
 
-        if (string.IsNullOrWhiteSpace(version))
-            return Result<PluginDependency>.Failure(Error.Validation(
-                "PluginDependency.VersionEmpty", "File version cannot be empty."));
+  private static bool IsValidNuGetPackageName(string packageName) // Renamed
+  {
+    if (string.IsNullOrWhiteSpace(packageName)) return false;
+    if (packageName.StartsWith('.') || packageName.EndsWith('.')) return false;
+    // NuGet package IDs are case-insensitive on the server but often case-preserved.
+    // Basic validation: letters, numbers, '.', '_', '-'
+    return packageName.All(c => char.IsLetterOrDigit(c) || c == '.' || c == '-' || c == '_');
+  }
 
-        if (string.IsNullOrWhiteSpace(filePath))
-            return Result<PluginDependency>.Failure(Error.Validation(
-                "PluginDependency.FilePathEmpty", "File path cannot be empty."));
-
-        return Result<PluginDependency>.Success(new PluginDependency(
-            fileName.Trim(), 
-            version.Trim(), 
-            PluginDependencyType.FileReference, 
-            filePath.Trim()));
-    }
-
-    /// <summary>
-    /// Checks if this dependency matches the specified name.
-    /// </summary>
-    /// <param name="name">The name to check</param>
-    /// <returns>True if the names match (case-insensitive), false otherwise</returns>
-    public bool MatchesName(string name) => 
-        string.Equals(Name, name, StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Checks if the specified version satisfies this dependency's version constraint.
-    /// </summary>
-    /// <param name="availableVersion">The available version to check</param>
-    /// <returns>True if the version satisfies the constraint, false otherwise</returns>
-    public bool IsVersionSatisfied(string availableVersion)
-    {
-        try
-        {
-            // For now, implement simple exact match. 
-            // This can be enhanced to support NuGet version ranges later.
-            if (Version == "*" || Version == "latest")
-                return true;
-
-            if (Version.StartsWith(">="))
-            {
-                var minVersion = Version.Substring(2).Trim();
-                return System.Version.TryParse(availableVersion, out var available) &&
-                       System.Version.TryParse(minVersion, out var minimum) &&
-                       available >= minimum;
-            }
-
-            if (Version.StartsWith(">"))
-            {
-                var minVersion = Version.Substring(1).Trim();
-                return System.Version.TryParse(availableVersion, out var available) &&
-                       System.Version.TryParse(minVersion, out var minimum) &&
-                       available > minimum;
-            }
-
-            // Exact version match
-            return string.Equals(Version, availableVersion, StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Gets a human-readable description of this dependency.
-    /// </summary>
-    /// <returns>A formatted description string</returns>
-    public string GetDescription()
-    {
-        var typeDescription = Type switch
-        {
-            PluginDependencyType.NuGetPackage => "NuGet Package",
-            PluginDependencyType.Plugin => "Plugin",
-            PluginDependencyType.FileReference => "File Reference",
-            _ => "Unknown"
-        };
-
-        var sourceInfo = !string.IsNullOrWhiteSpace(Source) ? $" from {Source}" : "";
-        return $"{typeDescription}: {Name} v{Version}{sourceInfo}";
-    }
-
-    /// <summary>
-    /// Validates a NuGet package name format.
-    /// </summary>
-    /// <param name="packageName">The package name to validate</param>
-    /// <returns>True if the package name is valid, false otherwise</returns>
-    private static bool IsValidPackageName(string packageName)
-    {
-        if (string.IsNullOrWhiteSpace(packageName))
-            return false;
-
-        // Basic NuGet package name validation
-        // - Must not start or end with dots
-        // - Must contain only letters, numbers, hyphens, dots, and underscores
-        // - Must be at least 1 character long
-        if (packageName.StartsWith('.') || packageName.EndsWith('.'))
-            return false;
-
-        return packageName.All(c => char.IsLetterOrDigit(c) || c == '.' || c == '-' || c == '_');
-    }
-
-    protected override IEnumerable<object?> GetEqualityComponents()
-    {
-        yield return Name;
-        yield return Version;
-        yield return Type;
-        yield return Source;
-    }
+  protected override IEnumerable<object?> GetEqualityComponents()
+  {
+    yield return Name;
+    yield return Version;
+    yield return Type;
+    yield return Source;
+  }
 }
-
-/// <summary>
-/// Represents the type of plugin dependency.
-/// </summary>
-public enum PluginDependencyType
-{
-    /// <summary>
-    /// A NuGet package dependency.
-    /// </summary>
-    NuGetPackage,
-
-    /// <summary>
-    /// A dependency on another plugin.
-    /// </summary>
-    Plugin,
-
-    /// <summary>
-    /// A file reference dependency (assembly, DLL, etc.).
-    /// </summary>
-    FileReference
-}
-

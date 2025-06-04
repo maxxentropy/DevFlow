@@ -12,15 +12,15 @@
     "directory_operations"
   ],
   "dependencies": [
-    "npm:fs-extra@11.1.1",
-    "npm:glob@10.3.10",
-    "npm:@types/node@20.10.0"
+    "npm:fs-extra@^11.1.0", // Using caret
+    "npm:glob@^10.3.0", // Using caret
+    "npm:@types/node@^20.10.0" // Using caret
   ],
   "configuration": {
     "defaultEncoding": "utf8",
     "backupFiles": true,
     "maxFileSize": 10485760,
-    "allowedExtensions": [".txt", ".md", ".json", ".js", ".ts", ".css", ".html"],
+    "allowedExtensions": [ ".txt", ".md", ".json", ".js", ".ts", ".css", ".html" ],
     "logLevel": "info"
   }
 }
