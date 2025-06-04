@@ -1,0 +1,20 @@
+
+{
+  "name": "HelloWorldPlugin",
+  "version": "1.0.0",
+  "description": "A simple Hello World plugin to validate the DevFlow plugin system. Demonstrates basic file operations, configuration usage, and result handling.",
+  "language": "CSharp",
+  "entryPoint": "HelloWorldPlugin.cs",
+  "capabilities": [
+    "file_read",
+    "file_write",
+    "configuration_access"
+  ],
+  "dependencies": [],
+  "configuration": {
+    "greeting": "Hello",
+    "outputPath": "./hello-output.txt",
+    "includeTimestamp": true,
+    "logLevel": "info"
+  }
+}

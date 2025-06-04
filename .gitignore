@@ -52,3 +52,19 @@ __pycache__/
 env/
 venv/
 
+# Plugin-related patterns
+plugins/*/node_modules/         # TypeScript plugin dependencies
+plugins/*/.venv/                # Python virtual environments  
+plugins/*/bin/                  # Compiled C# outputs
+plugins/*/obj/                  # C# build artifacts
+
+# Keep plugin structure but ignore runtime artifacts
+!plugins/**/plugin.json         # Always track manifests
+!plugins/**/*.cs                # Track C# source
+!plugins/**/*.ts                # Track TypeScript source  
+!plugins/**/*.py                # Track Python source
+!plugins/**/README.md           # Track documentation
+
+# Plugin execution outputs
+**/plugin-output/
+**/plugin-logs/

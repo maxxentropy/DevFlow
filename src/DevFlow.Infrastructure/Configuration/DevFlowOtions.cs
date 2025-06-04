@@ -33,25 +33,76 @@ public sealed class DevFlowOptions
 /// </summary>
 public sealed class PluginOptions
 {
-  /// <summary>
-  /// Gets or sets the plugin directories to scan.
-  /// </summary>
-  public List<string> PluginDirectories { get; set; } = new() { "./plugins" };
+    /// <summary>
+    /// Gets or sets the plugin directories to scan.
+    /// Supports multiple directories for different plugin sources.
+    /// </summary>
+    public List<string> PluginDirectories { get; set; } = new() { "./plugins" };
 
-  /// <summary>
-  /// Gets or sets whether to enable plugin hot-reload.
-  /// </summary>
-  public bool EnableHotReload { get; set; } = true;
+    /// <summary>
+    /// Gets or sets whether to enable plugin hot-reload.
+    /// Should be true for development, false for production.
+    /// </summary>
+    public bool EnableHotReload { get; set; } = false;
 
-  /// <summary>
-  /// Gets or sets the plugin execution timeout in milliseconds.
-  /// </summary>
-  public int ExecutionTimeoutMs { get; set; } = 30000;
+    /// <summary>
+    /// Gets or sets the plugin execution timeout in milliseconds.
+    /// </summary>
+    public int ExecutionTimeoutMs { get; set; } = 30000;
 
-  /// <summary>
-  /// Gets or sets the maximum memory usage per plugin in MB.
-  /// </summary>
-  public int MaxMemoryMb { get; set; } = 256;
+    /// <summary>
+    /// Gets or sets the maximum memory usage per plugin in MB.
+    /// </summary>
+    public int MaxMemoryMb { get; set; } = 256;
+
+    /// <summary>
+    /// Gets or sets the scan interval for plugin discovery in seconds.
+    /// Used when hot-reload is enabled.
+    /// </summary>
+    public int ScanIntervalSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Gets or sets the plugin registry cache file path.
+    /// Used to store plugin metadata for faster startup.
+    /// </summary>
+    public string? RegistryCachePath { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether to enable plugin signature validation.
+    /// </summary>
+    public bool RequireSignedPlugins { get; set; } = false;
+
+    /// <summary>
+    /// Gets or sets the allowed plugin sources for security.
+    /// Empty list means all sources are allowed.
+    /// </summary>
+    public List<string> AllowedPluginSources { get; set; } = new();
+
+    /// <summary>
+    /// Gets the resolved plugin directories with environment variables expanded.
+    /// </summary>
+    public IEnumerable<string> GetResolvedPluginDirectories()
+    {
+        return PluginDirectories.Select(dir => Environment.ExpandEnvironmentVariables(dir));
+    }
+
+    /// <summary>
+    /// Validates the plugin configuration.
+    /// </summary>
+    public void Validate()
+    {
+        if (!PluginDirectories.Any())
+            throw new InvalidOperationException("At least one plugin directory must be specified.");
+
+        if (ExecutionTimeoutMs <= 0)
+            throw new InvalidOperationException("Plugin execution timeout must be greater than zero.");
+
+        if (MaxMemoryMb <= 0)
+            throw new InvalidOperationException("Plugin maximum memory must be greater than zero.");
+
+        if (EnableHotReload && ScanIntervalSeconds <= 0)
+            throw new InvalidOperationException("Plugin scan interval must be greater than zero when hot-reload is enabled.");
+    }
 }
 
 /// <summary>
