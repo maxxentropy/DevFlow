@@ -284,16 +284,16 @@ public sealed class CSharpRuntimeManager : IPluginRuntimeManager
   {
     try
     {
-      // Look for types that implement a plugin interface or have specific attributes
+      // Look for types that implement a plugin interface, have specific attributes, or contain "Plugin" in the name
       var pluginTypes = assembly.GetTypes()
           .Where(t => t.IsClass && !t.IsAbstract)
-          .Where(t => HasPluginInterface(t) || HasPluginAttribute(t))
+          .Where(t => HasPluginInterface(t) || HasPluginAttribute(t) || t.Name.Contains("Plugin", StringComparison.OrdinalIgnoreCase))
           .ToList();
 
       if (!pluginTypes.Any())
       {
         return Result<object>.Failure(Error.Validation(
-            "CSharpRuntime.NoPluginClass", "No plugin class found that implements required interfaces or attributes."));
+            "CSharpRuntime.NoPluginClass", "No plugin class found that implements required interfaces, attributes, or contains 'Plugin' in the name."));
       }
 
       var pluginType = pluginTypes.First();
@@ -339,8 +339,9 @@ public sealed class CSharpRuntimeManager : IPluginRuntimeManager
       object? result;
       if (executeMethod.Name == "ExecuteAsync")
       {
-        // Handle async execution
-        var task = (Task)executeMethod.Invoke(pluginInstance, new object[] { context, cancellationToken })!;
+        // Handle async execution - create dynamic context object
+        var dynamicContext = CreateDynamicContext(context);
+        var task = (Task)executeMethod.Invoke(pluginInstance, new object[] { dynamicContext, cancellationToken })!;
         await task;
 
         // Get result from Task<T> if it returns a value
@@ -356,8 +357,9 @@ public sealed class CSharpRuntimeManager : IPluginRuntimeManager
       }
       else
       {
-        // Handle synchronous execution
-        result = executeMethod.Invoke(pluginInstance, new object[] { context });
+        // Handle synchronous execution - create dynamic context object
+        var dynamicContext = CreateDynamicContext(context);
+        result = executeMethod.Invoke(pluginInstance, new object[] { dynamicContext });
       }
 
       logs.Add("Plugin method execution completed");
@@ -379,11 +381,60 @@ public sealed class CSharpRuntimeManager : IPluginRuntimeManager
     var coreAssemblyPath = typeof(object).Assembly.Location;
     var coreDirectory = Path.GetDirectoryName(coreAssemblyPath)!;
 
+    // Core system assemblies
     references.Add(MetadataReference.CreateFromFile(coreAssemblyPath));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(coreDirectory, "System.Runtime.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(coreDirectory, "System.Collections.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(coreDirectory, "System.Linq.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(coreDirectory, "System.Threading.Tasks.dll")));
+    
+    // Add netstandard which contains core types
+    var netstandardPath = Path.Combine(coreDirectory, "netstandard.dll");
+    if (File.Exists(netstandardPath))
+    {
+      references.Add(MetadataReference.CreateFromFile(netstandardPath));
+    }
+    
+    // Add System.Text.Json for JSON serialization
+    var jsonAssemblyPath = Path.Combine(coreDirectory, "System.Text.Json.dll");
+    if (File.Exists(jsonAssemblyPath))
+    {
+      references.Add(MetadataReference.CreateFromFile(jsonAssemblyPath));
+    }
+    
+    // Add Microsoft.CSharp for dynamic support
+    var csharpAssemblyPath = Path.Combine(coreDirectory, "Microsoft.CSharp.dll");
+    if (File.Exists(csharpAssemblyPath))
+    {
+      references.Add(MetadataReference.CreateFromFile(csharpAssemblyPath));
+    }
+    
+    // Add additional commonly needed assemblies
+    var additionalAssemblies = new[]
+    {
+      "System.Console.dll",
+      "System.IO.FileSystem.dll",
+      "System.Memory.dll",
+      "System.ComponentModel.Primitives.dll",
+      "System.ObjectModel.dll",
+      "System.Threading.dll",
+      "System.Diagnostics.Process.dll",
+      "System.Reflection.dll",
+      "System.Runtime.CompilerServices.Unsafe.dll",
+      "System.Runtime.CompilerServices.VisualC.dll",
+      "System.Dynamic.Runtime.dll",
+      "System.Runtime.Extensions.dll",
+      "System.Core.dll"
+    };
+    
+    foreach (var assemblyName in additionalAssemblies)
+    {
+      var assemblyPath = Path.Combine(coreDirectory, assemblyName);
+      if (File.Exists(assemblyPath))
+      {
+        references.Add(MetadataReference.CreateFromFile(assemblyPath));
+      }
+    }
 
     return references;
   }
@@ -405,6 +456,21 @@ public sealed class CSharpRuntimeManager : IPluginRuntimeManager
   private static long GetCurrentMemoryUsage()
   {
     return GC.GetTotalMemory(false);
+  }
+  
+  private static object CreateDynamicContext(PluginExecutionContext context)
+  {
+    // Convert context to dynamic object that the plugin can use
+    return new
+    {
+      Configuration = context.ExecutionParameters,
+      InputData = context.InputData,
+      WorkingDirectory = context.WorkingDirectory,
+      EnvironmentVariables = context.EnvironmentVariables,
+      CorrelationId = context.CorrelationId,
+      Timeout = context.ExecutionTimeout,
+      MaxMemoryBytes = context.MaxMemoryBytes
+    };
   }
 
   private sealed class PluginAssemblyLoadContext : AssemblyLoadContext

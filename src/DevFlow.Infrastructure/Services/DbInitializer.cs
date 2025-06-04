@@ -35,15 +35,16 @@ public sealed class DbInitializer : IDbInitializer
     {
       _logger.LogInformation("Initializing database...");
 
-      // Ensure database is created
-      await _context.Database.EnsureCreatedAsync();
-
-      // Check if migration is needed
+      // Check if migration is needed and apply them
       var pendingMigrations = await _context.Database.GetPendingMigrationsAsync();
       if (pendingMigrations.Any())
       {
         _logger.LogInformation("Applying {Count} pending migrations", pendingMigrations.Count());
         await _context.Database.MigrateAsync();
+      }
+      else
+      {
+        _logger.LogInformation("No pending migrations found");
       }
 
       _logger.LogInformation("Database initialization completed successfully");

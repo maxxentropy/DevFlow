@@ -72,7 +72,8 @@ public sealed class PluginRepository : IPluginRepository
 
   public async Task<bool> ExistsAsync(string name, string version, CancellationToken cancellationToken = default)
   {
-    return await _context.Plugins
-        .AnyAsync(p => p.Metadata.Name == name && p.Metadata.Version.ToString() == version, cancellationToken);
+    // Load plugins into memory to avoid EF Core conversion issues
+    var plugins = await _context.Plugins.ToListAsync(cancellationToken);
+    return plugins.Any(p => p.Metadata.Name == name && p.Metadata.Version.ToString() == version);
   }
 }
