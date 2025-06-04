@@ -1,7 +1,8 @@
-﻿using DevFlow.Application.Plugins.Runtime;
+using DevFlow.Application.Plugins.Runtime;
 using DevFlow.Application.Plugins.Runtime.Models;
 using DevFlow.Domain.Plugins.Entities;
 using DevFlow.Domain.Plugins.Enums;
+using DevFlow.Domain.Plugins.ValueObjects;
 using DevFlow.SharedKernel.Results;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
@@ -135,13 +136,13 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
     }
   }
 
-  public Task<Result<Plugin>> LoadPluginAsync(
+  public async Task<Result<Plugin>> LoadPluginAsync(
       PluginManifest manifest,
       CancellationToken cancellationToken = default)
   {
     if (manifest is null)
-      return Task.FromResult(Result<Plugin>.Failure(Error.Validation(
-          "PluginDiscovery.ManifestNull", "Plugin manifest cannot be null.")));
+      return Result<Plugin>.Failure(Error.Validation(
+          "PluginDiscovery.ManifestNull", "Plugin manifest cannot be null."));
 
     _logger.LogDebug("Loading plugin: {PluginName} v{Version}", manifest.Name, manifest.Version);
 
@@ -160,17 +161,24 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
       if (pluginResult.IsFailure)
       {
         _logger.LogWarning("Failed to create plugin entity: {Error}", pluginResult.Error.Message);
-        return Task.FromResult(pluginResult);
+        return pluginResult;
       }
 
-      _logger.LogDebug("Successfully loaded plugin: {PluginName} v{Version}", manifest.Name, manifest.Version);
-      return Task.FromResult(pluginResult);
+      var plugin = pluginResult.Value;
+
+      // Process dependencies from manifest
+      await ProcessManifestDependenciesAsync(plugin, manifest, cancellationToken);
+
+      _logger.LogDebug("Successfully loaded plugin: {PluginName} v{Version} with {DependencyCount} dependencies", 
+          manifest.Name, manifest.Version, plugin.Dependencies.Count);
+      
+      return Result<Plugin>.Success(plugin);
     }
     catch (Exception ex)
     {
       _logger.LogError(ex, "Failed to load plugin from manifest: {PluginName}", manifest.Name);
-      return Task.FromResult(Result<Plugin>.Failure(Error.Failure(
-          "PluginDiscovery.LoadFailed", $"Failed to load plugin '{manifest.Name}': {ex.Message}")));
+      return Result<Plugin>.Failure(Error.Failure(
+          "PluginDiscovery.LoadFailed", $"Failed to load plugin '{manifest.Name}': {ex.Message}"));
     }
   }
 
@@ -437,5 +445,118 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
   {
     var reservedKeys = new[] { "name", "version", "description", "language", "entryPoint", "capabilities", "dependencies", "configuration" };
     return reservedKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
+  }
+
+  /// <summary>
+  /// Processes dependency declarations from the plugin manifest and adds them to the plugin entity.
+  /// </summary>
+  private async Task ProcessManifestDependenciesAsync(
+      Plugin plugin,
+      PluginManifest manifest,
+      CancellationToken cancellationToken)
+  {
+    if (!manifest.Dependencies.Any())
+      return;
+
+    _logger.LogDebug("Processing {Count} dependencies for plugin: {PluginName}", 
+        manifest.Dependencies.Count, manifest.Name);
+
+    foreach (var dependencyString in manifest.Dependencies)
+    {
+      try
+      {
+        var dependencyResult = ParseDependencyString(dependencyString);
+        if (dependencyResult.IsSuccess)
+        {
+          plugin.AddDependency(dependencyResult.Value);
+          _logger.LogDebug("Added dependency: {DependencyType} {DependencyName} v{Version}",
+              dependencyResult.Value.Type, dependencyResult.Value.Name, dependencyResult.Value.Version);
+        }
+        else
+        {
+          _logger.LogWarning("Failed to parse dependency '{Dependency}' for plugin '{PluginName}': {Error}",
+              dependencyString, manifest.Name, dependencyResult.Error.Message);
+        }
+      }
+      catch (Exception ex)
+      {
+        _logger.LogWarning(ex, "Error processing dependency '{Dependency}' for plugin '{PluginName}'",
+            dependencyString, manifest.Name);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Parses a dependency string from the manifest into a PluginDependency value object.
+  /// Supports formats:
+  /// - "nuget:PackageName@1.0.0"
+  /// - "plugin:PluginName@>=1.0.0"
+  /// - "file:./lib/mylib.dll@1.0.0"
+  /// </summary>
+  private static Result<PluginDependency> ParseDependencyString(string dependencyString)
+  {
+    if (string.IsNullOrWhiteSpace(dependencyString))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDiscovery.EmptyDependency", "Dependency string cannot be empty."));
+
+    var parts = dependencyString.Split(':', 2);
+    if (parts.Length != 2)
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDiscovery.InvalidDependencyFormat", 
+          $"Invalid dependency format: '{dependencyString}'. Expected format: 'type:name@version'."));
+
+    var typeString = parts[0].Trim();
+    var nameVersionString = parts[1].Trim();
+
+    var nameVersionParts = nameVersionString.Split('@', 2);
+    if (nameVersionParts.Length != 2)
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDiscovery.InvalidDependencyFormat", 
+          $"Invalid dependency format: '{dependencyString}'. Expected format: 'type:name@version'."));
+
+    var name = nameVersionParts[0].Trim();
+    var version = nameVersionParts[1].Trim();
+
+    if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(version))
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDiscovery.InvalidDependencyFormat", 
+          "Dependency name and version cannot be empty."));
+
+    var dependencyType = typeString.ToLowerInvariant() switch
+    {
+      "nuget" => PluginDependencyType.NuGetPackage,
+      "plugin" => PluginDependencyType.Plugin,
+      "file" => PluginDependencyType.FileReference,
+      _ => (PluginDependencyType?)null
+    };
+
+    if (!dependencyType.HasValue)
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDiscovery.UnsupportedDependencyType", 
+          $"Unsupported dependency type: '{typeString}'. Supported types: nuget, plugin, file."));
+
+    // For file references, the name is actually the path
+    var source = dependencyType == PluginDependencyType.FileReference ? name : null;
+
+    try
+    {
+      var dependency = dependencyType.Value switch
+      {
+        PluginDependencyType.NuGetPackage => PluginDependency.CreateNuGetPackage(name, version, source),
+        PluginDependencyType.Plugin => PluginDependency.CreatePluginDependency(name, version),
+        PluginDependencyType.FileReference => PluginDependency.CreateFileReference(name, version, source ?? name),
+        _ => Result<PluginDependency>.Failure(Error.Validation(
+            "PluginDiscovery.UnsupportedDependencyType", 
+            $"Unsupported dependency type: {dependencyType.Value}"))
+      };
+
+      return dependency;
+    }
+    catch (Exception ex)
+    {
+      return Result<PluginDependency>.Failure(Error.Validation(
+          "PluginDiscovery.DependencyCreationFailed", 
+          $"Failed to create dependency: {ex.Message}"));
+    }
   }
 }

@@ -1,0 +1,32 @@
+{
+  "name": "DataProcessingPlugin",
+  "version": "1.0.0",
+  "description": "A Python plugin for data processing operations including CSV/JSON manipulation, data analysis, transformation, and validation. Perfect for ETL workflows.",
+  "language": "Python",
+  "entryPoint": "data_processing_plugin.py",
+  "capabilities": [
+    "data_read",
+    "data_write",
+    "data_transform",
+    "data_validation",
+    "statistical_analysis",
+    "format_conversion"
+  ],
+  "dependencies": [
+    "pip:pandas>=2.0.0",
+    "pip:numpy>=1.24.0",
+    "pip:jsonschema>=4.17.0",
+    "pip:openpyxl>=3.1.0",
+    "pip:python-dateutil>=2.8.2"
+  ],
+  "configuration": {
+    "defaultFormat": "csv",
+    "maxRecords": 100000,
+    "dateFormat": "ISO",
+    "encoding": "utf-8",
+    "validateData": true,
+    "createBackups": true,
+    "logLevel": "info"
+  }
+}
+

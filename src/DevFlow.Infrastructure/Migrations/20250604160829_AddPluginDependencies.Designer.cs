@@ -3,6 +3,7 @@ using System;
 using DevFlow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DevFlow.Infrastructure.Migrations
 {
     [DbContext(typeof(DevFlowDbContext))]
-    partial class DevFlowDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250604160829_AddPluginDependencies")]
+    partial class AddPluginDependencies
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.8");
@@ -33,9 +36,7 @@ namespace DevFlow.Infrastructure.Migrations
 
                     b.Property<string>("Dependencies")
                         .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT")
-                        .HasDefaultValueSql("'[]'");
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("EntryPoint")
                         .IsRequired()

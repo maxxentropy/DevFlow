@@ -1,4 +1,4 @@
-﻿using DevFlow.Application.Plugins;
+using DevFlow.Application.Plugins;
 using DevFlow.Application.Plugins.Runtime;
 using DevFlow.Infrastructure.Plugins;
 using DevFlow.Infrastructure.Plugins.Runtime;
@@ -38,7 +38,8 @@ public static class PluginServiceExtensions
     return services
         .AddPluginDiscovery()
         .AddPluginRuntimeManagers()
-        .AddPluginExecution();
+        .AddPluginExecution()
+        .AddPluginDependencyManagement();
   }
 
   /// <summary>
@@ -63,10 +64,8 @@ public static class PluginServiceExtensions
   {
     // Register individual runtime managers
     services.AddScoped<CSharpRuntimeManager>();
-
-    // TODO: Add TypeScript and Python runtime managers when implemented
-    // services.AddScoped<TypeScriptRuntimeManager>();
-    // services.AddScoped<PythonRuntimeManager>();
+    services.AddScoped<TypeScriptRuntimeManager>();
+    services.AddScoped<PythonRuntimeManager>();
 
     // Register runtime manager factory
     services.AddScoped<IPluginRuntimeManagerFactory, PluginRuntimeManagerFactory>();
@@ -86,6 +85,28 @@ public static class PluginServiceExtensions
   {
     // Register plugin execution service
     services.AddScoped<IPluginExecutionService, PluginExecutionService>();
+
+    return services;
+  }
+
+  /// <summary>
+  /// Adds plugin dependency management services to the service collection.
+  /// </summary>
+  /// <param name="services">The service collection</param>
+  /// <returns>The service collection for method chaining</returns>
+  public static IServiceCollection AddPluginDependencyManagement(this IServiceCollection services)
+  {
+    // Register HttpClient for NuGet package downloads
+    services.AddSingleton<HttpClient>(provider => 
+    {
+      var client = new HttpClient();
+      client.Timeout = TimeSpan.FromMinutes(5);
+      client.DefaultRequestHeaders.Add("User-Agent", "DevFlow-Plugin-System/1.0");
+      return client;
+    });
+
+    // Register dependency resolver
+    services.AddScoped<IPluginDependencyResolver, PluginDependencyResolver>();
 
     return services;
   }
@@ -120,6 +141,7 @@ public static class PluginServiceExtensions
       var runtimeManagerFactory = serviceProvider.GetRequiredService<IPluginRuntimeManagerFactory>();
       var runtimeManager = serviceProvider.GetRequiredService<IPluginRuntimeManager>();
       var executionService = serviceProvider.GetRequiredService<IPluginExecutionService>();
+      var dependencyResolver = serviceProvider.GetRequiredService<IPluginDependencyResolver>();
       var pluginRepository = serviceProvider.GetRequiredService<IPluginRepository>();
 
       // Validate runtime managers are available

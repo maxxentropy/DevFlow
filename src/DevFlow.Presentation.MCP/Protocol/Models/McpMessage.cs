@@ -1,4 +1,5 @@
 ﻿using System.Text.Json.Serialization;
+using System.Text.Json;
 
 namespace DevFlow.Presentation.MCP.Protocol.Models;
 
@@ -21,10 +22,10 @@ public abstract record McpMessage
 public record McpRequest : McpMessage
 {
   /// <summary>
-  /// The request identifier.
+  /// The request identifier. Can be a string, number, or null according to JSON-RPC 2.0.
   /// </summary>
   [JsonPropertyName("id")]
-  public required string Id { get; init; }
+  public required JsonElement Id { get; init; }
 
   /// <summary>
   /// The method name to invoke.

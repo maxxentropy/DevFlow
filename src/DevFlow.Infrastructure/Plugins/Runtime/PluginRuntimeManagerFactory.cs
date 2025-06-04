@@ -37,14 +37,21 @@ public sealed class PluginRuntimeManagerFactory : IPluginRuntimeManagerFactory
         _logger.LogDebug("C# runtime manager available");
       }
 
-      // Add additional runtime managers as they're implemented
-      // var typescriptRuntime = _serviceProvider.GetService<TypeScriptRuntimeManager>();
-      // if (typescriptRuntime is not null)
-      //     runtimeManagers.Add(typescriptRuntime);
+      // Get TypeScript runtime manager
+      var typescriptRuntime = _serviceProvider.GetService<TypeScriptRuntimeManager>();
+      if (typescriptRuntime is not null)
+      {
+        runtimeManagers.Add(typescriptRuntime);
+        _logger.LogDebug("TypeScript runtime manager available");
+      }
 
-      // var pythonRuntime = _serviceProvider.GetService<PythonRuntimeManager>();
-      // if (pythonRuntime is not null)
-      //     runtimeManagers.Add(pythonRuntime);
+      // Get Python runtime manager
+      var pythonRuntime = _serviceProvider.GetService<PythonRuntimeManager>();
+      if (pythonRuntime is not null)
+      {
+        runtimeManagers.Add(pythonRuntime);
+        _logger.LogDebug("Python runtime manager available");
+      }
 
       _logger.LogDebug("Retrieved {Count} runtime managers", runtimeManagers.Count);
       return runtimeManagers;

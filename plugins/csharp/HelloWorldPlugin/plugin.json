@@ -10,7 +10,10 @@
     "file_write",
     "configuration_access"
   ],
-  "dependencies": [],
+  "dependencies": [
+    "nuget:Newtonsoft.Json@13.0.3",
+    "file:./lib/CustomHelper.dll@1.0.0"
+  ],
   "configuration": {
     "greeting": "Hello",
     "outputPath": "./hello-output.txt",

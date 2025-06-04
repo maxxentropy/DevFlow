@@ -40,6 +40,7 @@ public sealed class McpServer
   {
     _logger.LogDebug("Processing MCP request: {RequestJson}", requestJson);
 
+    string requestId = "";
     try
     {
       // Parse the incoming request
@@ -49,13 +50,15 @@ public sealed class McpServer
         return CreateErrorResponse("", -32700, "Parse error", "Invalid JSON-RPC request");
       }
 
+      requestId = GetIdAsString(request.Id); // Store the ID for error responses
+
       // Route to appropriate handler
       var result = await RouteRequestAsync(request, cancellationToken);
 
       // Create successful response
       var response = new McpResponse
       {
-        Id = request.Id,
+        Id = requestId,
         Result = result
       };
 
@@ -67,17 +70,17 @@ public sealed class McpServer
     catch (ArgumentException ex)
     {
       _logger.LogWarning(ex, "Invalid request parameters");
-      return CreateErrorResponse("", -32602, "Invalid params", ex.Message);
+      return CreateErrorResponse(requestId, -32602, "Invalid params", ex.Message);
     }
     catch (NotSupportedException ex)
     {
       _logger.LogWarning(ex, "Method not found: {Message}", ex.Message);
-      return CreateErrorResponse("", -32601, "Method not found", ex.Message);
+      return CreateErrorResponse(requestId, -32601, "Method not found", ex.Message);
     }
     catch (Exception ex)
     {
       _logger.LogError(ex, "Internal server error processing MCP request");
-      return CreateErrorResponse("", -32603, "Internal error", "An internal server error occurred");
+      return CreateErrorResponse(requestId, -32603, "Internal error", "An internal server error occurred");
     }
   }
 
@@ -140,12 +143,13 @@ public sealed class McpServer
   /// </summary>
   private async Task<McpResponse> ProcessSingleRequestAsync(McpRequest request, CancellationToken cancellationToken)
   {
+    var requestId = GetIdAsString(request.Id);
     try
     {
       var result = await RouteRequestAsync(request, cancellationToken);
       return new McpResponse
       {
-        Id = request.Id,
+        Id = requestId,
         Result = result
       };
     }
@@ -153,7 +157,7 @@ public sealed class McpServer
     {
       return new McpResponse
       {
-        Id = request.Id,
+        Id = requestId,
         Error = new McpError
         {
           Code = -32602,
@@ -166,7 +170,7 @@ public sealed class McpServer
     {
       return new McpResponse
       {
-        Id = request.Id,
+        Id = requestId,
         Error = new McpError
         {
           Code = -32601,
@@ -177,10 +181,10 @@ public sealed class McpServer
     }
     catch (Exception ex)
     {
-      _logger.LogError(ex, "Error processing request {RequestId}", request.Id);
+      _logger.LogError(ex, "Error processing request {RequestId}", requestId);
       return new McpResponse
       {
-        Id = request.Id,
+        Id = requestId,
         Error = new McpError
         {
           Code = -32603,
@@ -260,6 +264,20 @@ public sealed class McpServer
       _logger.LogError(ex, "Error validating handler registration");
       return false;
     }
+  }
+
+  /// <summary>
+  /// Converts a JsonElement ID to a string representation.
+  /// </summary>
+  private static string GetIdAsString(JsonElement id)
+  {
+    return id.ValueKind switch
+    {
+      JsonValueKind.String => id.GetString() ?? "",
+      JsonValueKind.Number => id.GetRawText(),
+      JsonValueKind.Null => "",
+      _ => id.GetRawText()
+    };
   }
 
   /// <summary>

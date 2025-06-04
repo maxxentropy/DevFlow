@@ -1,6 +1,8 @@
-﻿using DevFlow.Domain.Common;
+using DevFlow.Domain.Common;
 using DevFlow.Domain.Plugins.Entities;
+using DevFlow.Domain.Plugins.Enums;
 using DevFlow.Domain.Plugins.ValueObjects;
+using DevFlow.SharedKernel.Results;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -94,6 +96,20 @@ public sealed class PluginConfiguration : IEntityTypeConfiguration<Plugin>
         .Metadata.SetValueComparer(
             JsonValueComparerHelper.CreateJsonValueComparer<Dictionary<string, object>>());
 
+    // Configure Dependencies as JSON with proper serialization
+    builder.Property(p => p.Dependencies)
+        .HasConversion(
+            v => DependencyConverter.SerializeDependencies(v),
+            v => DependencyConverter.DeserializeDependencies(v))
+        .HasColumnType("TEXT")
+        .HasDefaultValueSql("'[]'")
+        .Metadata.SetValueComparer(
+            new ValueComparer<IReadOnlyList<PluginDependency>>(
+                (c1, c2) => c1 != null && c2 != null && c1.SequenceEqual(c2),
+                c => c == null ? 0 : c.Aggregate(0, (a, v) => HashCode.Combine(a, v.GetHashCode())),
+                c => c == null ? new List<PluginDependency>().AsReadOnly() : c.ToList().AsReadOnly()));
+        
+
     builder.Property(p => p.Status)
         .HasConversion<string>()
         .HasMaxLength(20)
@@ -119,4 +135,104 @@ public sealed class PluginConfiguration : IEntityTypeConfiguration<Plugin>
     // Ignore domain events (not persisted)
     builder.Ignore(p => p.DomainEvents);
   }
+}
+
+/// <summary>
+/// DTO for serializing plugin dependencies to JSON.
+/// </summary>
+internal record DependencyDto
+{
+    public string Name { get; init; } = string.Empty;
+    public string Version { get; init; } = string.Empty;
+    public string Type { get; init; } = string.Empty;
+    public string? Source { get; init; }
+}
+
+/// <summary>
+/// Static converter methods for serializing/deserializing plugin dependencies.
+/// </summary>
+internal static class DependencyConverter
+{
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false
+    };
+
+    public static string SerializeDependencies(IReadOnlyList<PluginDependency> dependencies)
+    {
+        if (dependencies == null || !dependencies.Any())
+            return "[]";
+
+        var dtos = dependencies.Select(d => new DependencyDto
+        {
+            Name = d.Name,
+            Version = d.Version,
+            Type = d.Type.ToString(),
+            Source = d.Source
+        }).ToList();
+
+        return JsonSerializer.Serialize(dtos, JsonOptions);
+    }
+
+    public static IReadOnlyList<PluginDependency> DeserializeDependencies(string json)
+    {
+        var list = DeserializeToList(json);
+        return list; // Return the list directly, as List<T> implements IReadOnlyList<T>
+    }
+
+    public static string SerializeList(List<PluginDependency> dependencies)
+    {
+        if (dependencies == null || !dependencies.Any())
+            return "[]";
+
+        var dtos = dependencies.Select(d => new DependencyDto
+        {
+            Name = d.Name,
+            Version = d.Version,
+            Type = d.Type.ToString(),
+            Source = d.Source
+        }).ToList();
+
+        return JsonSerializer.Serialize(dtos, JsonOptions);
+    }
+
+    public static List<PluginDependency> DeserializeToList(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json == "[]")
+            return new List<PluginDependency>();
+
+        try
+        {
+            var dtos = JsonSerializer.Deserialize<List<DependencyDto>>(json, JsonOptions);
+            if (dtos == null)
+                return new List<PluginDependency>();
+
+            var dependencies = new List<PluginDependency>();
+            foreach (var dto in dtos)
+            {
+                if (!Enum.TryParse<PluginDependencyType>(dto.Type, out var type))
+                    continue;
+
+                var dependencyResult = type switch
+                {
+                    PluginDependencyType.NuGetPackage => PluginDependency.CreateNuGetPackage(dto.Name, dto.Version, dto.Source),
+                    PluginDependencyType.Plugin => PluginDependency.CreatePluginDependency(dto.Name, dto.Version),
+                    PluginDependencyType.FileReference => PluginDependency.CreateFileReference(dto.Name, dto.Version, dto.Source ?? dto.Name),
+                    _ => (Result<PluginDependency>?)null
+                };
+
+                if (dependencyResult?.IsSuccess == true)
+                {
+                    dependencies.Add(dependencyResult.Value);
+                }
+            }
+
+            return dependencies;
+        }
+        catch
+        {
+            return new List<PluginDependency>();
+        }
+    }
 }

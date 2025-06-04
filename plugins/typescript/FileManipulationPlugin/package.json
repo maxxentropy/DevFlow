@@ -1,0 +1,34 @@
+{
+  "name": "devflow-file-manipulation-plugin",
+  "version": "1.0.0",
+  "description": "TypeScript plugin for file manipulation operations in DevFlow",
+  "main": "FileManipulationPlugin.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node FileManipulationPlugin.ts",
+    "test": "jest"
+  },
+  "dependencies": {
+    "fs-extra": "^11.1.1",
+    "glob": "^10.3.10"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/fs-extra": "^11.0.4",
+    "typescript": "^5.3.3",
+    "ts-node": "^10.9.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "devflow",
+    "plugin",
+    "typescript",
+    "file-manipulation",
+    "automation"
+  ],
+  "author": "DevFlow Team",
+  "license": "MIT"
+}
+

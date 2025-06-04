@@ -13,6 +13,7 @@ namespace DevFlow.Domain.Plugins.Entities;
 public sealed class Plugin : AggregateRoot<PluginId>
 {
   private readonly List<string> _capabilities = new();
+  private readonly List<PluginDependency> _dependencies = new();
 
   // Private constructor for persistence
   private Plugin()
@@ -60,6 +61,11 @@ public sealed class Plugin : AggregateRoot<PluginId>
   /// Gets the plugin capabilities (permissions/features it requires).
   /// </summary>
   public IReadOnlyList<string> Capabilities => _capabilities.AsReadOnly();
+
+  /// <summary>
+  /// Gets the plugin dependencies.
+  /// </summary>
+  public IReadOnlyList<PluginDependency> Dependencies => _dependencies.AsReadOnly();
 
   /// <summary>
   /// Gets the plugin configuration settings.
@@ -213,6 +219,123 @@ public sealed class Plugin : AggregateRoot<PluginId>
 
     AddDomainEvent(new PluginEnabledEvent(Id, DateTime.UtcNow));
 
+    return Result.Success();
+  }
+
+  /// <summary>
+  /// Adds a dependency to the plugin.
+  /// </summary>
+  /// <param name="dependency">The dependency to add</param>
+  /// <returns>A result indicating success or failure</returns>
+  public Result AddDependency(PluginDependency dependency)
+  {
+    if (dependency is null)
+      return Result.Failure(Error.Validation(
+          "Plugin.DependencyNull", "Dependency cannot be null."));
+
+    // Check for duplicate dependencies
+    if (_dependencies.Any(d => d.MatchesName(dependency.Name) && d.Type == dependency.Type))
+      return Result.Failure(Error.Validation(
+          "Plugin.DuplicateDependency", 
+          $"Dependency '{dependency.Name}' of type '{dependency.Type}' already exists."));
+
+    _dependencies.Add(dependency);
+    AddDomainEvent(new PluginDependencyAddedEvent(Id, dependency));
+    
+    return Result.Success();
+  }
+
+  /// <summary>
+  /// Removes a dependency from the plugin.
+  /// </summary>
+  /// <param name="dependencyName">The name of the dependency to remove</param>
+  /// <param name="dependencyType">The type of the dependency to remove</param>
+  /// <returns>A result indicating success or failure</returns>
+  public Result RemoveDependency(string dependencyName, PluginDependencyType dependencyType)
+  {
+    if (string.IsNullOrWhiteSpace(dependencyName))
+      return Result.Failure(Error.Validation(
+          "Plugin.DependencyNameEmpty", "Dependency name cannot be empty."));
+
+    var dependency = _dependencies.FirstOrDefault(d => 
+        d.MatchesName(dependencyName) && d.Type == dependencyType);
+
+    if (dependency is null)
+      return Result.Failure(Error.NotFound(
+          "Plugin.DependencyNotFound", 
+          $"Dependency '{dependencyName}' of type '{dependencyType}' not found."));
+
+    _dependencies.Remove(dependency);
+    AddDomainEvent(new PluginDependencyRemovedEvent(Id, dependency));
+    
+    return Result.Success();
+  }
+
+  /// <summary>
+  /// Gets all dependencies of a specific type.
+  /// </summary>
+  /// <param name="dependencyType">The type of dependencies to retrieve</param>
+  /// <returns>A read-only list of dependencies</returns>
+  public IReadOnlyList<PluginDependency> GetDependenciesByType(PluginDependencyType dependencyType)
+  {
+    return _dependencies.Where(d => d.Type == dependencyType).ToList().AsReadOnly();
+  }
+
+  /// <summary>
+  /// Checks if the plugin has any dependencies of the specified type.
+  /// </summary>
+  /// <param name="dependencyType">The type of dependency to check for</param>
+  /// <returns>True if the plugin has dependencies of the specified type, false otherwise</returns>
+  public bool HasDependenciesOfType(PluginDependencyType dependencyType)
+  {
+    return _dependencies.Any(d => d.Type == dependencyType);
+  }
+
+  /// <summary>
+  /// Gets a specific dependency by name and type.
+  /// </summary>
+  /// <param name="dependencyName">The name of the dependency</param>
+  /// <param name="dependencyType">The type of the dependency</param>
+  /// <returns>The dependency if found, null otherwise</returns>
+  public PluginDependency? GetDependency(string dependencyName, PluginDependencyType dependencyType)
+  {
+    return _dependencies.FirstOrDefault(d => 
+        d.MatchesName(dependencyName) && d.Type == dependencyType);
+  }
+
+  /// <summary>
+  /// Updates the plugin dependencies from a list.
+  /// </summary>
+  /// <param name="dependencies">The new list of dependencies</param>
+  /// <returns>A result indicating success or failure</returns>
+  public Result UpdateDependencies(IEnumerable<PluginDependency> dependencies)
+  {
+    if (dependencies is null)
+      return Result.Failure(Error.Validation(
+          "Plugin.DependenciesNull", "Dependencies list cannot be null."));
+
+    var dependencyList = dependencies.ToList();
+    
+    // Validate no duplicate dependencies
+    var duplicates = dependencyList
+        .GroupBy(d => new { d.Name, d.Type })
+        .Where(g => g.Count() > 1)
+        .Select(g => g.Key)
+        .ToList();
+    
+    if (duplicates.Any())
+    {
+      var duplicateNames = string.Join(", ", duplicates.Select(d => $"{d.Name} ({d.Type})"));
+      return Result.Failure(Error.Validation(
+          "Plugin.DuplicateDependencies", 
+          $"Duplicate dependencies found: {duplicateNames}"));
+    }
+
+    _dependencies.Clear();
+    _dependencies.AddRange(dependencyList);
+    
+    AddDomainEvent(new PluginDependenciesUpdatedEvent(Id, dependencyList.AsReadOnly()));
+    
     return Result.Success();
   }
 }

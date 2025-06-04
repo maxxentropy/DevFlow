@@ -1,0 +1,27 @@
+{
+  "name": "FileManipulationPlugin",
+  "version": "1.0.0",
+  "description": "A TypeScript plugin for file manipulation operations including reading, writing, searching, and transforming files. Ideal for development workflow automation.",
+  "language": "TypeScript",
+  "entryPoint": "FileManipulationPlugin.ts",
+  "capabilities": [
+    "file_read",
+    "file_write",
+    "file_search",
+    "file_transform",
+    "directory_operations"
+  ],
+  "dependencies": [
+    "npm:fs-extra@11.1.1",
+    "npm:glob@10.3.10",
+    "npm:@types/node@20.10.0"
+  ],
+  "configuration": {
+    "defaultEncoding": "utf8",
+    "backupFiles": true,
+    "maxFileSize": 10485760,
+    "allowedExtensions": [".txt", ".md", ".json", ".js", ".ts", ".css", ".html"],
+    "logLevel": "info"
+  }
+}
+
