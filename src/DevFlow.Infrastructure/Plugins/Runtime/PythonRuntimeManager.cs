@@ -536,26 +536,29 @@ public sealed class PythonRuntimeManager : IPluginRuntimeManager
 
   private async Task<string?> FindExecutableAsync(string fileName)
   {
-    var pathVariable = Environment.GetEnvironmentVariable("PATH") ?? "";
-    var paths = pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
-
-    var extensions = Environment.OSVersion.Platform == PlatformID.Win32NT
-        ? new[] { ".exe", ".cmd", ".bat" }
-        : new[] { "" };
-
-    foreach (var path in paths)
+    return await Task.Run(() =>
     {
-      foreach (var extension in extensions)
+      var pathVariable = Environment.GetEnvironmentVariable("PATH") ?? "";
+      var paths = pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+
+      var extensions = Environment.OSVersion.Platform == PlatformID.Win32NT
+          ? new[] { ".exe", ".cmd", ".bat" }
+          : new[] { "" };
+
+      foreach (var path in paths)
       {
-        var fullPath = Path.Combine(path, fileName + extension);
-        if (File.Exists(fullPath))
+        foreach (var extension in extensions)
         {
-          return fullPath;
+          var fullPath = Path.Combine(path, fileName + extension);
+          if (File.Exists(fullPath))
+          {
+            return fullPath;
+          }
         }
       }
-    }
 
-    return null;
+      return null;
+    });
   }
 
   private async Task<Result<(string Output, string Error)>> RunProcessAsync(
@@ -620,17 +623,22 @@ public sealed class PythonRuntimeManager : IPluginRuntimeManager
 
   private async Task CopyDirectoryAsync(string sourceDir, string destDir, CancellationToken cancellationToken)
   {
-    Directory.CreateDirectory(destDir);
-
-    foreach (var file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
+    await Task.Run(() =>
     {
-      var relativePath = Path.GetRelativePath(sourceDir, file);
-      var destFile = Path.Combine(destDir, relativePath);
-      var destDirectory = Path.GetDirectoryName(destFile)!;
+      Directory.CreateDirectory(destDir);
 
-      Directory.CreateDirectory(destDirectory);
-      File.Copy(file, destFile, true);
-    }
+      foreach (var file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
+      {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var relativePath = Path.GetRelativePath(sourceDir, file);
+        var destFile = Path.Combine(destDir, relativePath);
+        var destDirectory = Path.GetDirectoryName(destFile)!;
+
+        Directory.CreateDirectory(destDirectory);
+        File.Copy(file, destFile, true);
+      }
+    }, cancellationToken);
   }
 
   private static long GetEstimatedMemoryUsage()

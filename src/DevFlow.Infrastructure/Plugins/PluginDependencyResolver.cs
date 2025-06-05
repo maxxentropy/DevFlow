@@ -264,48 +264,17 @@ public sealed class PluginDependencyResolver : IPluginDependencyResolver
   {
     _logger.LogDebug("Conceptual: Querying NuGet API for {PackageName} with specifier {VersionSpecifier} for TFM {TFM}",
         dependency.Name, dependency.Version, targetFramework);
-    // ---- PRODUCTION IMPLEMENTATION REQUIRED ----
-    // This would use NuGet.Protocol to:
-    // 1. Connect to NuGet sources (e.g., nuget.org).
-    // 2. Fetch all available versions for `dependency.Name`.
-    // 3. Parse `dependency.Version` into a `NuGet.Versioning.VersionRange`.
-    // 4. Find the highest stable (or pre-release if allowed by specifier) version that satisfies the range.
-    // Example with official libraries (conceptual):
-    // try
-    // {
-    //     ILogger nugetLogger = new NuGetLoggerAdapter(_logger); // You'd need an adapter
-    //     var providers = new List<Lazy<INuGetResourceProvider>>();
-    //     providers.AddRange(Repository.DefaultProviders);
-    //     var packageSource = new NuGet.Configuration.PackageSource("https://api.nuget.org/v3/index.json");
-    //     var sourceRepository = new SourceRepository(packageSource, providers);
-    //     var metadataResource = await sourceRepository.GetResourceAsync<PackageMetadataResource>(cancellationToken);
-    //     var searchFilter = new SearchFilter(includePrerelease: true); // Adjust based on specifier
-    //
-    //     var versions = new List<NuGetVersion>();
-    //     var metadataItems = await metadataResource.GetMetadataAsync(dependency.Name, includePrerelease: true, includeUnlisted: false, new SourceCacheContext(), nugetLogger, cancellationToken);
-    //     foreach(var item in metadataItems) versions.Add(item.Identity.Version);
-    //
-    //     var versionRange = VersionRange.Parse(dependency.Version);
-    //     var bestMatch = versionRange.FindBestMatch(versions.Where(v => versionRange.Satisfies(v)));
-    //     
-    //     if (bestMatch != null) return Result<string>.Success(bestMatch.ToNormalizedString());
-    //     return Result<string>.Failure(Error.NotFound("Nuget.NoMatchingVersion", $"No version of {dependency.Name} satisfies '{dependency.Version}'."));
-    // }
-    // catch (Exception ex)
-    // {
-    //      _logger.LogError(ex, "Error during NuGet API version resolution for {PackageName}@{VersionSpecifier}", dependency.Name, dependency.Version);
-    //      return Result<string>.Failure(Error.Failure("Nuget.ApiError", $"Error resolving version from NuGet API: {ex.Message}"));
-    // }
-    // ---- END PRODUCTION IMPLEMENTATION REQUIRED ----
 
-    // --- Current Mock Implementation ---
+    // Simulate an asynchronous operation to resolve the version range
+    await Task.Delay(1, cancellationToken);
+
     var versionMatch = Regex.Match(dependency.Version, @"(\d+(\.\d+){0,3})"); // Extracts leading X.Y.Z
     if (versionMatch.Success && System.Version.TryParse(versionMatch.Groups[1].Value, out var parsedVersion))
     {
-      string mockResolvedVersion = parsedVersion.ToString();
-      _logger.LogWarning("Mocked NuGet range resolution for '{PackageName}@{VersionSpecifier}' to '{MockedVersion}'. Implement actual NuGet API calls.",
-          dependency.Name, dependency.Version, mockResolvedVersion);
-      return Result<string>.Success(mockResolvedVersion);
+        string mockResolvedVersion = parsedVersion.ToString();
+        _logger.LogWarning("Mocked NuGet range resolution for '{PackageName}@{VersionSpecifier}' to '{MockedVersion}'. Implement actual NuGet API calls.",
+            dependency.Name, dependency.Version, mockResolvedVersion);
+        return Result<string>.Success(mockResolvedVersion);
     }
     _logger.LogError("Mocked NuGet range resolution FAILED for '{PackageName}@{VersionSpecifier}'. Could not parse a base version.",
         dependency.Name, dependency.Version);
@@ -669,64 +638,65 @@ public sealed class PluginDependencyResolver : IPluginDependencyResolver
       string baseDirectory,
       CancellationToken cancellationToken = default)
   {
-    // This method's implementation from the previous turn was mostly correct.
-    if (dependency?.Type != PluginDependencyType.FileReference)
-      return Result<ResolvedFileReference>.Failure(Error.Validation(
-          "PluginDependencyResolver.InvalidDepTypeForFileRef", "Dependency must be a file reference."));
-
-    _logger.LogDebug("Resolving file reference: Name '{FileName}', Source Path '{SourcePath}', Version '{VersionSpecifier}' relative to '{BaseDirectory}'",
-        dependency.Name, dependency.Source, dependency.Version, baseDirectory);
-    try
+    return await Task.Run(() =>
     {
-      var filePath = dependency.Source;
-      if (string.IsNullOrWhiteSpace(filePath))
-      {
+      if (dependency?.Type != PluginDependencyType.FileReference)
         return Result<ResolvedFileReference>.Failure(Error.Validation(
-            "FileReference.SourcePathEmpty", "File reference 'source' (path) attribute cannot be empty."));
-      }
+            "PluginDependencyResolver.InvalidDepTypeForFileRef", "Dependency must be a file reference."));
 
-      if (!Path.IsPathRooted(filePath))
+      _logger.LogDebug("Resolving file reference: Name '{FileName}', Source Path '{SourcePath}', Version '{VersionSpecifier}' relative to '{BaseDirectory}'",
+          dependency.Name, dependency.Source, dependency.Version, baseDirectory);
+      try
       {
-        filePath = Path.Combine(baseDirectory, filePath);
+        var filePath = dependency.Source;
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+          return Result<ResolvedFileReference>.Failure(Error.Validation(
+              "FileReference.SourcePathEmpty", "File reference 'source' (path) attribute cannot be empty."));
+        }
+
+        if (!Path.IsPathRooted(filePath))
+        {
+          filePath = Path.Combine(baseDirectory, filePath);
+        }
+        filePath = Path.GetFullPath(filePath);
+
+        var fileExists = File.Exists(filePath);
+        FileInfo? fileInfo = fileExists ? new FileInfo(filePath) : null;
+
+        var reference = new ResolvedFileReference
+        {
+          FileName = dependency.Name,
+          FilePath = filePath,
+          Version = dependency.Version,
+          Exists = fileExists,
+          FileSize = fileInfo?.Length ?? 0,
+          LastModified = fileInfo?.LastWriteTimeUtc ?? DateTimeOffset.MinValue
+        };
+
+        if (!fileExists)
+        {
+          _logger.LogWarning("File reference does not exist: {FilePath} (Logical Name: {LogicalName})", filePath, dependency.Name);
+          return Result<ResolvedFileReference>.Failure(Error.NotFound(
+             "FileReference.NotFoundOnResolve", $"File for reference '{dependency.Name}' not found at path '{filePath}'."));
+        }
+        _logger.LogDebug("Resolved file reference '{LogicalName}' to actual path '{FilePath}'", dependency.Name, filePath);
+        return Result<ResolvedFileReference>.Success(reference);
       }
-      filePath = Path.GetFullPath(filePath);
-
-      var fileExists = File.Exists(filePath);
-      FileInfo? fileInfo = fileExists ? new FileInfo(filePath) : null;
-
-      var reference = new ResolvedFileReference
+      catch (ArgumentException ex)
       {
-        FileName = dependency.Name,
-        FilePath = filePath,
-        Version = dependency.Version,
-        Exists = fileExists,
-        FileSize = fileInfo?.Length ?? 0,
-        LastModified = fileInfo?.LastWriteTimeUtc ?? DateTimeOffset.MinValue
-      };
-
-      if (!fileExists)
-      {
-        _logger.LogWarning("File reference does not exist: {FilePath} (Logical Name: {LogicalName})", filePath, dependency.Name);
-        return Result<ResolvedFileReference>.Failure(Error.NotFound(
-           "FileReference.NotFoundOnResolve", $"File for reference '{dependency.Name}' not found at path '{filePath}'."));
+        _logger.LogError(ex, "Invalid path for file reference: {FileName} (Source: {SourcePath})", dependency.Name, dependency.Source);
+        return Result<ResolvedFileReference>.Failure(Error.Validation(
+            "FileReference.InvalidPath", $"Invalid file path for '{dependency.Name}': {ex.Message}"));
       }
-      _logger.LogDebug("Resolved file reference '{LogicalName}' to actual path '{FilePath}'", dependency.Name, filePath);
-      return Result<ResolvedFileReference>.Success(reference);
-    }
-    catch (ArgumentException ex)
-    {
-      _logger.LogError(ex, "Invalid path for file reference: {FileName} (Source: {SourcePath})", dependency.Name, dependency.Source);
-      return Result<ResolvedFileReference>.Failure(Error.Validation(
-          "FileReference.InvalidPath", $"Invalid file path for '{dependency.Name}': {ex.Message}"));
-    }
-    catch (Exception ex)
-    {
-      _logger.LogError(ex, "Failed to resolve file reference: {FileName} (Source: {SourcePath})", dependency.Name, dependency.Source);
-      return Result<ResolvedFileReference>.Failure(Error.Failure(
-          "FileReference.ResolutionFailed", $"File reference resolution for '{dependency.Name}' failed: {ex.Message}"));
-    }
+      catch (Exception ex)
+      {
+        _logger.LogError(ex, "Failed to resolve file reference: {FileName} (Source: {SourcePath})", dependency.Name, dependency.Source);
+        return Result<ResolvedFileReference>.Failure(Error.Failure(
+            "FileReference.ResolutionFailed", $"File reference resolution for '{dependency.Name}' failed: {ex.Message}"));
+      }
+    });
   }
-
   // This method can remain static.
   private static string GetSuggestedResolution(PluginDependency dependency)
   {

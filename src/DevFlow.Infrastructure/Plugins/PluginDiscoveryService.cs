@@ -128,13 +128,13 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
     return Result<IReadOnlyList<PluginManifest>>.Success(allManifests.AsReadOnly());
   }
 
-  public async Task<Result<Plugin>> LoadPluginAsync(
+  public Task<Result<Plugin>> LoadPluginAsync(
     PluginManifest manifest,
     CancellationToken cancellationToken = default)
   {
     if (manifest is null)
-      return Result<Plugin>.Failure(Error.Validation(
-          "PluginDiscovery.ManifestNull", "Plugin manifest cannot be null."));
+      return Task.FromResult(Result<Plugin>.Failure(Error.Validation(
+          "PluginDiscovery.ManifestNull", "Plugin manifest cannot be null.")));
 
     _logger.LogDebug("Loading plugin from manifest: {PluginName} v{Version}", manifest.Name, manifest.Version);
 
@@ -154,7 +154,7 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
       if (pluginCreateResult.IsFailure)
       {
         _logger.LogWarning("Failed to create plugin entity for {PluginName}: {Error}", manifest.Name, pluginCreateResult.Error.Message);
-        return pluginCreateResult;
+        return Task.FromResult(pluginCreateResult);
       }
 
       var plugin = pluginCreateResult.Value;
@@ -184,13 +184,13 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
       _logger.LogDebug("Successfully loaded plugin entity: {PluginName} v{Version} with {DependencyCount} dependencies specified in manifest.",
           manifest.Name, manifest.Version, plugin.Dependencies.Count);
 
-      return Result<Plugin>.Success(plugin);
+      return Task.FromResult(Result<Plugin>.Success(plugin));
     }
     catch (Exception ex)
     {
       _logger.LogError(ex, "Failed to load plugin from manifest: {PluginName}", manifest.Name);
-      return Result<Plugin>.Failure(Error.Failure(
-          "PluginDiscovery.LoadFailed", $"Failed to load plugin '{manifest.Name}': {ex.Message}"));
+      return Task.FromResult(Result<Plugin>.Failure(Error.Failure(
+          "PluginDiscovery.LoadFailed", $"Failed to load plugin '{manifest.Name}': {ex.Message}")));
     }
   }
 
@@ -473,56 +473,58 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
   }
 
   public async Task<Result<bool>> ValidateManifestAsync(
-    PluginManifest manifest,
-    CancellationToken cancellationToken = default)
+      PluginManifest manifest,
+      CancellationToken cancellationToken = default)
   {
     if (manifest is null)
-      return Result<bool>.Failure(Error.Validation(
-          "PluginDiscovery.ManifestNull", "Plugin manifest cannot be null."));
+      return await Task.FromResult(Result<bool>.Failure(Error.Validation(
+          "PluginDiscovery.ManifestNull", "Plugin manifest cannot be null.")));
 
-    try
+    return await Task.Run(() =>
     {
-      var errors = new List<string>();
-
-      if (string.IsNullOrWhiteSpace(manifest.Name)) errors.Add("Manifest 'name' is missing or empty.");
-      if (string.IsNullOrWhiteSpace(manifest.Version)) errors.Add("Manifest 'version' is missing or empty.");
-      if (string.IsNullOrWhiteSpace(manifest.EntryPoint)) errors.Add("Manifest 'entryPoint' is missing or empty.");
-      else if (!File.Exists(manifest.EntryPointPath)) errors.Add($"Entry point file '{manifest.EntryPointPath}' does not exist.");
-
-      var langValidationResult = ValidateLanguageRequirements(manifest);
-      if (langValidationResult.IsFailure) errors.Add(langValidationResult.Error.Message);
-
-      if (manifest.Dependencies != null)
+      try
       {
-        foreach (var depString in manifest.Dependencies)
+        var errors = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(manifest.Name)) errors.Add("Manifest 'name' is missing or empty.");
+        if (string.IsNullOrWhiteSpace(manifest.Version)) errors.Add("Manifest 'version' is missing or empty.");
+        if (string.IsNullOrWhiteSpace(manifest.EntryPoint)) errors.Add("Manifest 'entryPoint' is missing or empty.");
+        else if (!File.Exists(manifest.EntryPointPath)) errors.Add($"Entry point file '{manifest.EntryPointPath}' does not exist.");
+
+        var langValidationResult = ValidateLanguageRequirements(manifest);
+        if (langValidationResult.IsFailure) errors.Add(langValidationResult.Error.Message);
+
+        if (manifest.Dependencies != null)
         {
-          if (string.IsNullOrWhiteSpace(depString))
+          foreach (var depString in manifest.Dependencies)
           {
-            errors.Add("An empty or whitespace dependency string was found.");
-            continue;
+            if (string.IsNullOrWhiteSpace(depString))
+            {
+              errors.Add("An empty or whitespace dependency string was found.");
+              continue;
+            }
+            var parsedDep = ParseDependencyString(depString);
+            if (parsedDep.IsFailure) errors.Add($"Invalid dependency '{depString}': {parsedDep.Error.Message}");
           }
-          var parsedDep = ParseDependencyString(depString);
-          if (parsedDep.IsFailure) errors.Add($"Invalid dependency '{depString}': {parsedDep.Error.Message}");
         }
-      }
 
-      if (errors.Any())
+        if (errors.Any())
+        {
+          string combinedErrors = string.Join("; ", errors);
+          _logger.LogWarning("Plugin manifest validation failed for {PluginName}: {Errors}", manifest.Name, combinedErrors);
+          return Result<bool>.Failure(Error.Validation("PluginDiscovery.InvalidManifest", combinedErrors));
+        }
+
+        return Result<bool>.Success(true);
+      }
+      catch (Exception ex)
       {
-        string combinedErrors = string.Join("; ", errors);
-        _logger.LogWarning("Plugin manifest validation failed for {PluginName}: {Errors}", manifest.Name, combinedErrors);
-        return Result<bool>.Failure(Error.Validation("PluginDiscovery.InvalidManifest", combinedErrors));
+        _logger.LogError(ex, "Exception during plugin manifest validation: {PluginName}", manifest.Name);
+        return Result<bool>.Failure(Error.Failure(
+            "PluginDiscovery.ManifestValidationException", $"Manifest validation failed with exception: {ex.Message}"));
       }
-
-      return Result<bool>.Success(true);
-    }
-    catch (Exception ex)
-    {
-      _logger.LogError(ex, "Exception during plugin manifest validation: {PluginName}", manifest.Name);
-      return Result<bool>.Failure(Error.Failure(
-          "PluginDiscovery.ManifestValidationException", $"Manifest validation failed with exception: {ex.Message}"));
-    }
+    }, cancellationToken);
   }
-
   private Result<bool> ValidateLanguageRequirements(PluginManifest manifest)
   {
     return manifest.Language switch
