@@ -3,7 +3,7 @@
 ApiIntegration plugin for DevFlow - provides HTTP API integration capabilities.
 Supports REST API calls, authentication, webhook handling, and response processing.
 """
-
+import sys
 import json
 import asyncio
 import time
@@ -153,7 +153,7 @@ class ApiIntegrationPlugin:
             raise ValueError(f'Unsupported operation: {op_type}')
     
     async def _make_request(self, operation: Dict[str, Any]) -> Dict[str, Any]:
-        """Make a single HTTP request."""
+        """Make a single HTTP request without a retry loop."""
         method = operation['method'].upper()
         url = operation['url']
         
@@ -162,7 +162,6 @@ class ApiIntegrationPlugin:
         
         self._log(f'Making {method} request to {url}')
         
-        # Prepare request parameters
         request_kwargs = {
             'method': method,
             'url': url,
@@ -170,53 +169,32 @@ class ApiIntegrationPlugin:
             'params': operation.get('params', {})
         }
         
-        # Add request body if provided
         if operation.get('json'):
             request_kwargs['json'] = operation['json']
         elif operation.get('data'):
             request_kwargs['data'] = operation['data']
+            
+        if operation.get('auth'):
+            request_kwargs['auth'] = self._prepare_auth(operation['auth'])
         
-        # Add authentication if provided
-        auth = operation.get('auth')
-        if auth:
-            request_kwargs['auth'] = self._prepare_auth(auth)
-        
-        # Override timeout if specified
         if operation.get('timeout'):
             request_kwargs['timeout'] = operation['timeout']
+
+        request_start = time.time()
+        response = await self.client.request(**request_kwargs)
+        request_time = (time.time() - request_start) * 1000
         
-        # Make request with retries
-        max_retries = operation.get('retries', self.config['maxRetries'])
+        self._log(f'Request completed in {request_time:.2f}ms - Status: {response.status_code}')
         
-        for attempt in range(max_retries + 1):
-            try:
-                request_start = time.time()
-                response = await self.client.request(**request_kwargs)
-                request_time = (time.time() - request_start) * 1000
-                
-                self._log(f'Request completed in {request_time:.2f}ms - Status: {response.status_code}')
-                
-                # Validate response if requested
-                if operation.get('validateResponse', True):
-                    self._validate_response(response, operation.get('expectedStatus', [200]))
-                
-                # Parse response
-                result = await self._parse_response(response)
-                result['requestTime'] = request_time
-                result['attempt'] = attempt + 1
-                
-                return result
-                
-            except Exception as e:
-                self._log(f'Request attempt {attempt + 1} failed: {str(e)}')
-                
-                if attempt < max_retries:
-                    delay = self.config['retryDelay'] * (2 ** attempt)  # Exponential backoff
-                    self._log(f'Retrying in {delay}s...')
-                    await asyncio.sleep(delay)
-                else:
-                    raise
-    
+        if operation.get('validateResponse', True):
+            self._validate_response(response, operation.get('expectedStatus', [200]))
+        
+        result = await self._parse_response(response)
+        result['requestTime'] = request_time
+        result['attempt'] = 1 # Only one attempt
+        
+        return result
+            
     async def _make_batch_requests(self, endpoints: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Make multiple API requests concurrently."""
         self._log(f'Making batch requests to {len(endpoints)} endpoints')
@@ -525,7 +503,7 @@ class ApiIntegrationPlugin:
         """Add message to logs."""
         self.logs.append(message)
         if self.config.get('logLevel') in ['debug', 'info']:
-            print(f'[ApiIntegration] {message}')
+            print(f'[ApiIntegration] {message}', file=sys.stderr)
 
 
 # For DevFlow runtime compatibility

@@ -60,18 +60,30 @@ public sealed class CompositePluginRuntimeManager : IPluginRuntimeManager
       return Result<PluginExecutionResult>.Failure(Error.Validation(
           "CompositeRuntime.ContextNull", "Execution context cannot be null."));
 
-    var runtimeManager = _runtimeManagerFactory.GetRuntimeManager(plugin);
+    // --- MODIFICATION START ---
+    // Find a manager that supports the language, even if it's not currently "available"
+    var managersForLanguage = _runtimeManagerFactory.GetRuntimeManagersForLanguage(plugin.Metadata.Language).ToList();
+    if (!managersForLanguage.Any())
+    {
+      var langError = Error.Validation(
+          "CompositeRuntime.LanguageNotSupported",
+          $"The plugin language '{plugin.Metadata.Language}' is not supported by any registered runtime manager.");
+      _logger.LogWarning("Execution failed for {PluginName}: {Error}", plugin.Metadata.Name, langError.Message);
+      return Result<PluginExecutionResult>.Failure(langError);
+    }
+
+    // Now, find a manager that can actually execute it (i.e., is available)
+    var runtimeManager = managersForLanguage.FirstOrDefault(m => m.CanExecutePlugin(plugin));
     if (runtimeManager is null)
     {
-      var error = Error.Validation(
-          "CompositeRuntime.NoCompatibleManager",
-          $"No compatible runtime manager found for plugin '{plugin.Metadata.Name}' with language '{plugin.Metadata.Language}'.");
+      var runtimeError = Error.Failure(
+          "CompositeRuntime.RuntimeUnavailable",
+          $"A runtime manager for '{plugin.Metadata.Language}' was found, but it is not available. Check server logs for initialization errors (e.g., Python or Node.js not found in PATH).");
 
-      _logger.LogWarning("No compatible runtime manager found for plugin: {PluginName} ({Language})",
-          plugin.Metadata.Name, plugin.Metadata.Language);
-
-      return Result<PluginExecutionResult>.Failure(error);
+      _logger.LogWarning("Execution failed for {PluginName}: {Error}", plugin.Metadata.Name, runtimeError.Message);
+      return Result<PluginExecutionResult>.Failure(runtimeError);
     }
+    // --- MODIFICATION END ---
 
     _logger.LogDebug("Delegating execution to runtime manager: {RuntimeId} for plugin: {PluginName}",
         runtimeManager.RuntimeId, plugin.Metadata.Name);

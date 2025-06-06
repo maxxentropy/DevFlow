@@ -3,7 +3,7 @@
 DataProcessing plugin for DevFlow - provides data manipulation and analysis capabilities.
 Supports CSV, JSON, Excel file processing with data validation and transformation.
 """
-
+import sys
 import json
 import os
 import pandas as pd
@@ -478,7 +478,7 @@ class DataProcessingPlugin:
         """Add message to logs."""
         self.logs.append(message)
         if self.config.get('logLevel') in ['debug', 'info']:
-            print(f'[DataProcessing] {message}')
+            print(f'[DataProcessing] {message}', file=sys.stderr)
 
 
 # For DevFlow runtime compatibility

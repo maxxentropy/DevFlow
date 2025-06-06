@@ -63,15 +63,15 @@ public static class PluginServiceExtensions
   public static IServiceCollection AddPluginRuntimeManagers(this IServiceCollection services)
   {
     // Register individual runtime managers
-    services.AddScoped<CSharpRuntimeManager>();
-    services.AddScoped<TypeScriptRuntimeManager>();
-    services.AddScoped<PythonRuntimeManager>();
+    services.AddSingleton<CSharpRuntimeManager>();
+    services.AddSingleton<TypeScriptRuntimeManager>();
+    services.AddSingleton<PythonRuntimeManager>();
 
     // Register runtime manager factory
-    services.AddScoped<IPluginRuntimeManagerFactory, PluginRuntimeManagerFactory>();
+    services.AddSingleton<IPluginRuntimeManagerFactory, PluginRuntimeManagerFactory>();
 
     // Register composite runtime manager as the primary implementation
-    services.AddScoped<IPluginRuntimeManager, CompositePluginRuntimeManager>();
+    services.AddSingleton<IPluginRuntimeManager, CompositePluginRuntimeManager>();
 
     return services;
   }

@@ -16,6 +16,34 @@ using Microsoft.Extensions.Options;
 using Serilog;
 using System.Text.Json;
 
+
+// Add these more specific debug lines for file access
+Console.WriteLine("---- FILE ACCESS DEBUG START ----");
+string pythonPathToTest = @"C:\Python312\python.exe";
+Console.WriteLine($"[DEBUG] Testing direct access to: {pythonPathToTest}");
+
+try
+{
+  bool fileExists = System.IO.File.Exists(pythonPathToTest);
+  Console.WriteLine($"[DEBUG] Result of File.Exists(): {fileExists}");
+
+  if (fileExists)
+  {
+    var attributes = System.IO.File.GetAttributes(pythonPathToTest);
+    Console.WriteLine($"[DEBUG] Successfully read file attributes: {attributes}");
+    Console.WriteLine("[INFO] This test PASSED. The application can see and access the file.");
+  }
+  else
+  {
+    Console.WriteLine("[ERROR] File.Exists() returned false. This confirms a file access or permission problem.");
+  }
+}
+catch (Exception ex)
+{
+  Console.WriteLine($"[ERROR] An exception occurred while accessing the file: {ex.Message}");
+}
+Console.WriteLine("---- FILE ACCESS DEBUG END ----\n");
+
 // Create a minimal bootstrap logger for startup
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
