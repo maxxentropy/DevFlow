@@ -1,0 +1,19 @@
+{
+  "name": "CSharpCoveragePlugin",
+  "version": "1.0.0",
+  "description": "Runs tests and calculates code coverage for a .NET solution or project using the 'coverlet' tool.",
+  "language": "CSharp",
+  "entryPoint": "CSharpCoveragePlugin.cs",
+  "capabilities": [
+    "process_execute",
+    "file_read",
+    "directory_operations"
+  ],
+  "dependencies": [],
+  "configuration": {
+    "projectPath": "path/to/your/solution.sln",
+    "reportFormat": "cobertura",
+    "threshold": "70",
+    "exclude": "[YourProject.Tests]*"
+  }
+}
