@@ -373,6 +373,8 @@ public sealed class CSharpRuntimeManager : IPluginRuntimeManager
     }
   }
 
+  // In: src/DevFlow.Infrastructure/Plugins/Runtime/CSharpRuntimeManager.cs
+
   private static List<MetadataReference> GetRequiredReferences()
   {
     var references = new List<MetadataReference>();
@@ -387,28 +389,29 @@ public sealed class CSharpRuntimeManager : IPluginRuntimeManager
     references.Add(MetadataReference.CreateFromFile(Path.Combine(coreDirectory, "System.Collections.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(coreDirectory, "System.Linq.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(coreDirectory, "System.Threading.Tasks.dll")));
-    
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(coreDirectory, "System.Xml.Linq.dll")));
+
     // Add netstandard which contains core types
     var netstandardPath = Path.Combine(coreDirectory, "netstandard.dll");
     if (File.Exists(netstandardPath))
     {
       references.Add(MetadataReference.CreateFromFile(netstandardPath));
     }
-    
+
     // Add System.Text.Json for JSON serialization
     var jsonAssemblyPath = Path.Combine(coreDirectory, "System.Text.Json.dll");
     if (File.Exists(jsonAssemblyPath))
     {
       references.Add(MetadataReference.CreateFromFile(jsonAssemblyPath));
     }
-    
+
     // Add Microsoft.CSharp for dynamic support
     var csharpAssemblyPath = Path.Combine(coreDirectory, "Microsoft.CSharp.dll");
     if (File.Exists(csharpAssemblyPath))
     {
       references.Add(MetadataReference.CreateFromFile(csharpAssemblyPath));
     }
-    
+
     // Add additional commonly needed assemblies
     var additionalAssemblies = new[]
     {
@@ -426,7 +429,7 @@ public sealed class CSharpRuntimeManager : IPluginRuntimeManager
       "System.Runtime.Extensions.dll",
       "System.Core.dll"
     };
-    
+
     foreach (var assemblyName in additionalAssemblies)
     {
       var assemblyPath = Path.Combine(coreDirectory, assemblyName);
@@ -438,7 +441,6 @@ public sealed class CSharpRuntimeManager : IPluginRuntimeManager
 
     return references;
   }
-
   private static bool HasPluginInterface(Type type)
   {
     // Check for common plugin interface patterns
