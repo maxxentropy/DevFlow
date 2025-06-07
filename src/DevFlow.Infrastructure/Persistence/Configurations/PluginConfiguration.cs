@@ -128,9 +128,15 @@ public sealed class PluginConfiguration : IEntityTypeConfiguration<Plugin>
     builder.Property(p => p.ErrorMessage)
         .HasMaxLength(2000);
 
+    builder.Property(p => p.SourceHash)
+    .HasMaxLength(64); // SHA256 hash is 64 characters
+
     // Indexes
     builder.HasIndex(p => p.Status)
         .HasDatabaseName("IX_Plugins_Status");
+
+    builder.HasIndex(p => p.SourceHash)
+        .HasDatabaseName("IX_Plugins_SourceHash");
 
     // Ignore domain events (not persisted)
     builder.Ignore(p => p.DomainEvents);

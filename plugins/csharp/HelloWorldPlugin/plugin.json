@@ -9,9 +9,9 @@
     "file_write",
     "configuration_access"
   ],
+  // Example for file references..."file:./lib/CustomHelper.dll@1.0.0" // File references usually remain exact
   "dependencies": [
-    "nuget:Newtonsoft.Json@^13.0.1", // Using caret for compatible updates
-    "file:./lib/CustomHelper.dll@1.0.0" // File references usually remain exact
+    "nuget:Newtonsoft.Json@^13.0.1" // Using caret for compatible updates
   ],
   "configuration": {
     "greeting": "Hello",

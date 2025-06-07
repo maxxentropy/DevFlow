@@ -5,14 +5,9 @@ using DevFlow.Domain.Plugins.Enums; // Make sure this using is present for Plugi
 using DevFlow.Domain.Plugins.ValueObjects;
 using DevFlow.SharedKernel.Results;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq; // << ??????? LINQ is imported for .Contains() extension method on IEnumerable<T>
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace DevFlow.Infrastructure.Plugins;
 
@@ -194,7 +189,46 @@ public sealed class PluginDiscoveryService : IPluginDiscoveryService
     }
   }
 
-  // Method within: src/DevFlow.Infrastructure/Plugins/PluginDiscoveryService.cs
+  public async Task<Result<string>> GetPluginSourceHashAsync(PluginManifest manifest, CancellationToken cancellationToken = default)
+  {
+    if (!File.Exists(manifest.ManifestFilePath) || !File.Exists(manifest.EntryPointPath))
+    {
+      return Result<string>.Failure(Error.NotFound(
+          "PluginDiscovery.SourceNotFound",
+          "Cannot generate hash because manifest or entry point file does not exist."));
+    }
+
+    try
+    {
+      using var sha256 = SHA256.Create();
+      using var combinedStream = new MemoryStream();
+
+      // Add manifest file bytes
+      await using (var manifestStream = File.OpenRead(manifest.ManifestFilePath))
+      {
+        await manifestStream.CopyToAsync(combinedStream, cancellationToken);
+      }
+
+      // Add entry point file bytes
+      await using (var entryPointStream = File.OpenRead(manifest.EntryPointPath))
+      {
+        await entryPointStream.CopyToAsync(combinedStream, cancellationToken);
+      }
+
+      combinedStream.Position = 0;
+      var hashBytes = await sha256.ComputeHashAsync(combinedStream, cancellationToken);
+
+      return Result<string>.Success(BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant());
+    }
+    catch (Exception ex)
+    {
+      _logger.LogError(ex, "Failed to generate source hash for plugin {PluginName}", manifest.Name);
+      return Result<string>.Failure(Error.Failure(
+          "PluginDiscovery.HashGenerationFailed", $"Hash generation failed: {ex.Message}"));
+    }
+  }
+
+  
   private static Result<PluginDependency> ParseDependencyString(string dependencyString)
   {
     if (string.IsNullOrWhiteSpace(dependencyString))

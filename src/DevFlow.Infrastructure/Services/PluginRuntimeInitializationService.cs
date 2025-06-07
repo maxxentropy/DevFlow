@@ -2,10 +2,16 @@
 using DevFlow.Application.Plugins.Runtime;
 using DevFlow.Application.Plugins.Runtime.Models;
 using DevFlow.Domain.Plugins.Entities;
+using DevFlow.Domain.Plugins.Enums;
 using DevFlow.Infrastructure.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace DevFlow.Infrastructure.Services;
 
@@ -15,22 +21,22 @@ namespace DevFlow.Infrastructure.Services;
 /// </summary>
 public sealed class PluginRuntimeInitializationService : IHostedService
 {
+  private readonly IServiceScopeFactory _scopeFactory;
   private readonly IPluginRuntimeManager _runtimeManager;
   private readonly IPluginDiscoveryService _discoveryService;
-  private readonly IPluginRepository _pluginRepository;
   private readonly IOptions<DevFlowOptions> _options;
   private readonly ILogger<PluginRuntimeInitializationService> _logger;
 
   public PluginRuntimeInitializationService(
+      IServiceScopeFactory scopeFactory,
       IPluginRuntimeManager runtimeManager,
       IPluginDiscoveryService discoveryService,
-      IPluginRepository pluginRepository,
       IOptions<DevFlowOptions> options,
       ILogger<PluginRuntimeInitializationService> logger)
   {
+    _scopeFactory = scopeFactory;
     _runtimeManager = runtimeManager;
     _discoveryService = discoveryService;
-    _pluginRepository = pluginRepository;
     _options = options;
     _logger = logger;
   }
@@ -39,6 +45,10 @@ public sealed class PluginRuntimeInitializationService : IHostedService
   {
     _logger.LogInformation("Plugin runtime system initialization starting...");
 
+    // Create a new scope to resolve scoped services like the repository
+    using var scope = _scopeFactory.CreateScope();
+    var pluginRepository = scope.ServiceProvider.GetRequiredService<IPluginRepository>();
+
     try
     {
       await ValidatePluginDirectoriesAsync(cancellationToken);
@@ -46,7 +56,8 @@ public sealed class PluginRuntimeInitializationService : IHostedService
       await _runtimeManager.InitializeAsync(cancellationToken);
       _logger.LogDebug("Composite plugin runtime manager initialized.");
 
-      await DiscoverAndRegisterPluginsAsync(cancellationToken);
+      // Pass the resolved repository to the discovery method
+      await DiscoverAndRegisterPluginsAsync(pluginRepository, cancellationToken);
 
       _logger.LogInformation("Plugin runtime system initialization finished successfully.");
     }
@@ -63,7 +74,7 @@ public sealed class PluginRuntimeInitializationService : IHostedService
     return _runtimeManager.DisposeAsync(cancellationToken);
   }
 
-  private async Task DiscoverAndRegisterPluginsAsync(CancellationToken cancellationToken)
+  private async Task DiscoverAndRegisterPluginsAsync(IPluginRepository pluginRepository, CancellationToken cancellationToken)
   {
     var pluginDirectories = _options.Value.Plugins.GetResolvedPluginDirectories().ToList();
     if (!pluginDirectories.Any())
@@ -90,7 +101,7 @@ public sealed class PluginRuntimeInitializationService : IHostedService
       cancellationToken.ThrowIfCancellationRequested();
       try
       {
-        await ProcessPluginManifestAsync(manifest, cancellationToken);
+        await ProcessPluginManifestAsync(manifest, pluginRepository, cancellationToken);
       }
       catch (Exception ex)
       {
@@ -99,51 +110,66 @@ public sealed class PluginRuntimeInitializationService : IHostedService
     }
   }
 
-  private async Task ProcessPluginManifestAsync(PluginManifest manifest, CancellationToken cancellationToken)
+  private async Task ProcessPluginManifestAsync(PluginManifest manifest, IPluginRepository pluginRepository, CancellationToken cancellationToken)
   {
     _logger.LogDebug("Processing plugin: {PluginName} v{Version}", manifest.Name, manifest.Version);
 
-    var pluginResult = await _discoveryService.LoadPluginAsync(manifest, cancellationToken);
-    if (pluginResult.IsFailure)
+    var allPlugins = await pluginRepository.GetAllAsync(cancellationToken);
+    var existingPlugin = allPlugins
+        .FirstOrDefault(p => p.Metadata.Name == manifest.Name && p.Metadata.Version.ToString() == manifest.Version);
+
+    Plugin pluginToValidate;
+
+    if (existingPlugin != null)
     {
-      _logger.LogWarning("Failed to load plugin '{PluginName}': {Error}", manifest.Name, pluginResult.Error.Message);
-      return;
+      // If plugin exists and is NOT in an error state, we can skip it on startup.
+      if (existingPlugin.Status != PluginStatus.Error)
+      {
+        _logger.LogDebug("Plugin {PluginName} v{Version} already exists with status {Status}. Skipping startup registration.",
+            manifest.Name, manifest.Version, existingPlugin.Status);
+        return;
+      }
+
+      // The plugin exists but failed before. We'll use this existing entity to retry validation.
+      pluginToValidate = existingPlugin;
+      _logger.LogInformation("Re-validating failed plugin: {PluginName} v{Version}", manifest.Name, manifest.Version);
+    }
+    else
+    {
+      // This is a completely new plugin. Load it from the manifest.
+      var pluginResult = await _discoveryService.LoadPluginAsync(manifest, cancellationToken);
+      if (pluginResult.IsFailure)
+      {
+        _logger.LogWarning("Failed to load plugin '{PluginName}': {Error}", manifest.Name, pluginResult.Error.Message);
+        return;
+      }
+      pluginToValidate = pluginResult.Value;
     }
 
-    var plugin = pluginResult.Value;
-
-    var exists = await _pluginRepository.ExistsAsync(plugin.Metadata.Name, plugin.Metadata.Version.ToString(), cancellationToken);
-    if (exists)
-    {
-      _logger.LogDebug("Plugin {PluginName} v{Version} already exists in the repository. Skipping registration.", plugin.Metadata.Name, plugin.Metadata.Version);
-      return;
-    }
-
-    await ValidateAndRegisterPluginAsync(plugin, cancellationToken);
+    // Now, call the validation logic with the correct plugin object (either new or existing).
+    await ValidateAndRegisterPluginAsync(pluginToValidate, manifest, pluginRepository, cancellationToken);
   }
 
-  // --- THIS IS THE METHOD WITH THE ENHANCED LOGGING ---
-  private async Task ValidateAndRegisterPluginAsync(Plugin plugin, CancellationToken cancellationToken)
+  private async Task ValidateAndRegisterPluginAsync(Plugin plugin, PluginManifest manifest, IPluginRepository pluginRepository, CancellationToken cancellationToken)
   {
     _logger.LogDebug("Validating plugin: {PluginName} ({Language})", plugin.Metadata.Name, plugin.Metadata.Language);
 
     var validationResult = await _runtimeManager.ValidatePluginAsync(plugin, cancellationToken);
 
+    var hashResult = await _discoveryService.GetPluginSourceHashAsync(manifest, cancellationToken);
+    if (hashResult.IsSuccess)
+    {
+      plugin.UpdateSourceHash(hashResult.Value);
+    }
+    else
+    {
+      _logger.LogWarning("Could not generate source hash for {PluginName}: {Error}", plugin.Metadata.Name, hashResult.Error.Message);
+    }
+
     if (validationResult.IsFailure || !validationResult.Value)
     {
-      string errorMessage;
-      if (validationResult.IsFailure)
-      {
-        errorMessage = $"Validation failed with error: {validationResult.Error.Code} - {validationResult.Error.Message}";
-      }
-      else
-      {
-        // This case is when the validation returns a successful result but the value is false.
-        errorMessage = $"The runtime manager's validation check returned false. This often means a required file (like an entry point) was not found. Check previous logs for details from the specific runtime manager.";
-      }
-
+      string errorMessage = validationResult.IsFailure ? validationResult.Error.Message : "The runtime manager's validation check returned false.";
       _logger.LogWarning("Plugin validation FAILED for {PluginName}. Reason: {Error}", plugin.Metadata.Name, errorMessage);
-
       plugin.Validate(false, errorMessage);
     }
     else
@@ -154,13 +180,20 @@ public sealed class PluginRuntimeInitializationService : IHostedService
 
     try
     {
-      await _pluginRepository.AddAsync(plugin, cancellationToken);
-      await _pluginRepository.SaveChangesAsync(cancellationToken);
+      var existingPlugin = await pluginRepository.GetByIdAsync(plugin.Id, cancellationToken);
+      if (existingPlugin != null)
+      {
+        await pluginRepository.UpdateAsync(plugin, cancellationToken);
+      }
+      else
+      {
+        await pluginRepository.AddAsync(plugin, cancellationToken);
+      }
+      await pluginRepository.SaveChangesAsync(cancellationToken);
 
-      _logger.LogInformation("Successfully registered plugin: {PluginName} v{Version} ({Language}) - Final Status: {Status}",
+      _logger.LogInformation("Successfully registered/updated plugin: {PluginName} v{Version} - Final Status: {Status}",
           plugin.Metadata.Name,
           plugin.Metadata.Version,
-          plugin.Metadata.Language,
           plugin.Status);
     }
     catch (Exception ex)
@@ -191,7 +224,6 @@ public sealed class PluginRuntimeInitializationService : IHostedService
         catch (Exception ex)
         {
           _logger.LogError(ex, "Failed to create plugin directory structure at: {Directory}", directory);
-          // This might be a critical error depending on deployment strategy.
         }
       }
     }
@@ -200,18 +232,18 @@ public sealed class PluginRuntimeInitializationService : IHostedService
   private static string GetPluginDirectoryReadme()
   {
     return """
-    # DevFlow Plugins Directory
+        # DevFlow Plugins Directory
+            
+        This directory contains plugins that extend DevFlow's automation capabilities.
+            
+        ## Directory Structure
+            
+        Place your language-specific plugin folders inside this directory.
+        - `csharp/`
+        - `typescript/`
+        - `python/`
         
-    This directory contains plugins that extend DevFlow's automation capabilities.
-        
-    ## Directory Structure
-        
-    Place your language-specific plugin folders inside this directory.
-    - `csharp/`
-    - `typescript/`
-    - `python/`
-    
-    Each plugin must include a `plugin.json` manifest file.
-    """;
+        Each plugin must include a `plugin.json` manifest file.
+        """;
   }
 }

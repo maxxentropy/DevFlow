@@ -1,6 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <Compile Remove="Extensions\EnhancedPluginServiceExtensions.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\DevFlow.Application\DevFlow.Application.csproj" />
     <ProjectReference Include="..\DevFlow.Domain\DevFlow.Domain.csproj" />
     <ProjectReference Include="..\DevFlow.SharedKernel\DevFlow.SharedKernel.csproj" />

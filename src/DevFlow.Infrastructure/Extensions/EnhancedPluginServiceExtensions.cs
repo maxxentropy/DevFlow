@@ -1,9 +1,13 @@
-using DevFlow.Application.Plugins;
+﻿using DevFlow.Application.Plugins;
 using DevFlow.Application.Plugins.Runtime;
+using DevFlow.Application.Plugins.Runtime.Models;
+using DevFlow.Domain.Plugins.Entities;
+using DevFlow.Domain.Plugins.Enums;
 using DevFlow.Infrastructure.Plugins;
 using DevFlow.Infrastructure.Plugins.Runtime;
 using DevFlow.Infrastructure.Plugins.Security;
 using DevFlow.Infrastructure.Services;
+using DevFlow.SharedKernel.Results;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -11,25 +15,24 @@ using Microsoft.Extensions.Logging;
 namespace DevFlow.Infrastructure.Extensions;
 
 /// <summary>
-/// Updated plugin service registration that replaces the original methods to avoid conflicts.
+/// Enhanced plugin service registration with security, dependency management, and runtime isolation.
 /// </summary>
-public static class PluginServiceExtensions
+public static class EnhancedPluginServiceExtensions
 {
   /// <summary>
   /// Adds the complete enhanced plugin system with security, dependency resolution, and optimized runtimes.
-  /// This replaces the original AddPluginSystem method.
   /// </summary>
   /// <param name="services">The service collection</param>
-  /// <param name="configureSecurityOptions">Optional configuration for plugin security options</param>
+  /// <param name="configureOptions">Optional configuration for plugin security options</param>
   /// <returns>The service collection for method chaining</returns>
-  public static IServiceCollection AddPluginSystem(
+  public static IServiceCollection AddEnhancedPluginSystem(
       this IServiceCollection services,
-      Action<PluginSecurityOptions>? configureSecurityOptions = null)
+      Action<PluginSecurityOptions>? configureOptions = null)
   {
     return services
-        .AddPluginSecurity(configureSecurityOptions)
+        .AddPluginSecurity(configureOptions)
         .AddPluginDependencyManagement()
-        .AddPluginRuntimes()
+        .AddEnhancedPluginRuntimes()
         .AddPluginExecution()
         .AddPluginDiscovery()
         .AddPluginInitialization();
@@ -38,7 +41,10 @@ public static class PluginServiceExtensions
   /// <summary>
   /// Adds plugin security and sandboxing services.
   /// </summary>
-  private static IServiceCollection AddPluginSecurity(
+  /// <param name="services">The service collection</param>
+  /// <param name="configureOptions">Optional configuration for security options</param>
+  /// <returns>The service collection for method chaining</returns>
+  public static IServiceCollection AddPluginSecurity(
       this IServiceCollection services,
       Action<PluginSecurityOptions>? configureOptions = null)
   {
@@ -62,12 +68,7 @@ public static class PluginServiceExtensions
     }
 
     // Register security manager
-    services.TryAddSingleton(provider =>
-    {
-      var logger = provider.GetRequiredService<ILogger<PluginSecurityManager>>();
-      var options = provider.GetService<PluginSecurityOptions>();
-      return new PluginSecurityManager(logger, options);
-    });
+    services.TryAddSingleton<PluginSecurityManager>();
 
     return services;
   }
@@ -75,10 +76,12 @@ public static class PluginServiceExtensions
   /// <summary>
   /// Adds enhanced plugin dependency management with multi-package-manager support.
   /// </summary>
+  /// <param name="services">The service collection</param>
+  /// <returns>The service collection for method chaining</returns>
   public static IServiceCollection AddPluginDependencyManagement(this IServiceCollection services)
   {
     // Register HttpClient for package downloads
-    services.TryAddSingleton<HttpClient>(provider =>
+    services.AddSingleton<HttpClient>(provider =>
     {
       var client = new HttpClient();
       client.Timeout = TimeSpan.FromMinutes(5);
@@ -95,16 +98,12 @@ public static class PluginServiceExtensions
   /// <summary>
   /// Adds enhanced plugin runtime managers with improved C# compilation and caching.
   /// </summary>
-  public static IServiceCollection AddPluginRuntimes(this IServiceCollection services)
+  /// <param name="services">The service collection</param>
+  /// <returns>The service collection for method chaining</returns>
+  public static IServiceCollection AddEnhancedPluginRuntimes(this IServiceCollection services)
   {
     // Register enhanced runtime managers
-    services.TryAddSingleton(provider =>
-    {
-      var logger = provider.GetRequiredService<ILogger<CSharpRuntimeManager>>();
-      var dependencyResolver = provider.GetRequiredService<IPluginDependencyResolver>();
-      return new CSharpRuntimeManager(logger, dependencyResolver);
-    });
-
+    services.TryAddSingleton<CSharpRuntimeManager>();
     services.TryAddSingleton<TypeScriptRuntimeManager>();
     services.TryAddSingleton<PythonRuntimeManager>();
 
@@ -120,6 +119,8 @@ public static class PluginServiceExtensions
   /// <summary>
   /// Adds plugin execution services with security integration.
   /// </summary>
+  /// <param name="services">The service collection</param>
+  /// <returns>The service collection for method chaining</returns>
   public static IServiceCollection AddPluginExecution(this IServiceCollection services)
   {
     // Register plugin execution service
@@ -131,6 +132,8 @@ public static class PluginServiceExtensions
   /// <summary>
   /// Adds plugin discovery services.
   /// </summary>
+  /// <param name="services">The service collection</param>
+  /// <returns>The service collection for method chaining</returns>
   public static IServiceCollection AddPluginDiscovery(this IServiceCollection services)
   {
     // Register plugin discovery service
@@ -142,6 +145,8 @@ public static class PluginServiceExtensions
   /// <summary>
   /// Adds plugin initialization services.
   /// </summary>
+  /// <param name="services">The service collection</param>
+  /// <returns>The service collection for method chaining</returns>
   public static IServiceCollection AddPluginInitialization(this IServiceCollection services)
   {
     // Add plugin initialization as a hosted service
@@ -151,16 +156,16 @@ public static class PluginServiceExtensions
   }
 
   /// <summary>
-  /// Validates that all required plugin services are properly registered.
+  /// Validates that all required enhanced plugin services are properly registered.
   /// </summary>
   /// <param name="serviceProvider">The service provider</param>
   /// <returns>True if all services are properly registered</returns>
-  public static bool ValidatePluginServices(this IServiceProvider serviceProvider)
+  public static bool ValidateEnhancedPluginServices(this IServiceProvider serviceProvider)
   {
     try
     {
       var logger = serviceProvider.GetService<ILogger<object>>();
-      logger?.LogInformation("Validating plugin service registration...");
+      logger?.LogInformation("Validating enhanced plugin service registration...");
 
       // Validate core services
       var discoveryService = serviceProvider.GetRequiredService<IPluginDiscoveryService>();
@@ -169,6 +174,7 @@ public static class PluginServiceExtensions
       var executionService = serviceProvider.GetRequiredService<IPluginExecutionService>();
       var dependencyResolver = serviceProvider.GetRequiredService<IPluginDependencyResolver>();
       var pluginRepository = serviceProvider.GetRequiredService<IPluginRepository>();
+      var securityManager = serviceProvider.GetRequiredService<PluginSecurityManager>();
 
       // Validate runtime managers are available
       var runtimeManagers = runtimeManagerFactory.GetAllRuntimeManagers().ToList();
@@ -178,25 +184,36 @@ public static class PluginServiceExtensions
         return false;
       }
 
-      logger?.LogInformation("Plugin service validation completed successfully. {Count} runtime managers available",
-          runtimeManagers.Count);
+      // Validate specific runtime managers
+      var csharpRuntime = serviceProvider.GetService<CSharpRuntimeManager>();
+      var typescriptRuntime = serviceProvider.GetService<TypeScriptRuntimeManager>();
+      var pythonRuntime = serviceProvider.GetService<PythonRuntimeManager>();
+
+      var availableRuntimes = new List<string>();
+      if (csharpRuntime != null) availableRuntimes.Add("C#");
+      if (typescriptRuntime != null) availableRuntimes.Add("TypeScript");
+      if (pythonRuntime != null) availableRuntimes.Add("Python");
+
+      logger?.LogInformation("Enhanced plugin service validation completed successfully. " +
+          "Available runtimes: [{Runtimes}], Security: {SecurityEnabled}",
+          string.Join(", ", availableRuntimes), securityManager != null);
 
       return true;
     }
     catch (Exception ex)
     {
       var logger = serviceProvider.GetService<ILogger<object>>();
-      logger?.LogError(ex, "Plugin service validation failed");
+      logger?.LogError(ex, "Enhanced plugin service validation failed");
       return false;
     }
   }
 
   /// <summary>
-  /// Performs a comprehensive health check of the plugin system.
+  /// Performs a comprehensive health check of the enhanced plugin system.
   /// </summary>
   /// <param name="serviceProvider">The service provider</param>
   /// <returns>Health check result with detailed information</returns>
-  public static async Task<PluginSystemHealthCheck> PerformPluginHealthCheckAsync(
+  public static async Task<PluginSystemHealthCheck> PerformHealthCheckAsync(
       this IServiceProvider serviceProvider,
       CancellationToken cancellationToken = default)
   {
@@ -212,13 +229,16 @@ public static class PluginServiceExtensions
       var logger = serviceProvider.GetService<ILogger<object>>();
 
       // Check runtime managers
-      await CheckRuntimeManagersHealthAsync(serviceProvider, healthCheck, logger, cancellationToken);
+      await CheckRuntimeManagersHealth(serviceProvider, healthCheck, logger, cancellationToken);
 
       // Check dependency resolver
-      await CheckDependencyResolverHealthAsync(serviceProvider, healthCheck, logger, cancellationToken);
+      await CheckDependencyResolverHealth(serviceProvider, healthCheck, logger, cancellationToken);
+
+      // Check security manager
+      await CheckSecurityManagerHealth(serviceProvider, healthCheck, logger, cancellationToken);
 
       // Check plugin repository
-      await CheckPluginRepositoryHealthAsync(serviceProvider, healthCheck, logger, cancellationToken);
+      await CheckPluginRepositoryHealth(serviceProvider, healthCheck, logger, cancellationToken);
 
       // Determine overall health
       healthCheck.IsHealthy = healthCheck.Components.Values.All(c => c.IsHealthy);
@@ -233,7 +253,7 @@ public static class PluginServiceExtensions
     }
   }
 
-  private static async Task CheckRuntimeManagersHealthAsync(
+  private static async Task CheckRuntimeManagersHealth(
       IServiceProvider serviceProvider,
       PluginSystemHealthCheck healthCheck,
       ILogger? logger,
@@ -278,39 +298,118 @@ public static class PluginServiceExtensions
     }
   }
 
-  private static async Task CheckDependencyResolverHealthAsync(
+  private static async Task CheckDependencyResolverHealth(
       IServiceProvider serviceProvider,
       PluginSystemHealthCheck healthCheck,
       ILogger? logger,
       CancellationToken cancellationToken)
   {
-    await Task.Run(() =>
+    try
     {
-      try
-      {
-        var dependencyResolver = serviceProvider.GetRequiredService<IPluginDependencyResolver>();
+      var dependencyResolver = serviceProvider.GetRequiredService<IPluginDependencyResolver>();
 
-        // For now, just check that the service can be resolved
+      // Create a test plugin for dependency resolution testing
+      var testPluginResult = CreateTestPlugin();
+      if (testPluginResult.IsSuccess)
+      {
+        var validationResult = await dependencyResolver.ValidateDependenciesAsync(testPluginResult.Value, cancellationToken);
         healthCheck.Components["DependencyResolver"] = new ComponentHealth
         {
-          IsHealthy = true,
-          Message = "Dependency resolver service available",
+          IsHealthy = validationResult.IsSuccess,
+          Message = validationResult.IsSuccess ? "Dependency resolver operational" : validationResult.Error.Message,
           LastChecked = DateTimeOffset.UtcNow
         };
       }
-      catch (Exception ex)
+      else
       {
         healthCheck.Components["DependencyResolver"] = new ComponentHealth
         {
           IsHealthy = false,
-          Message = $"Dependency resolver health check failed: {ex.Message}",
+          Message = "Failed to create test plugin for dependency resolver health check",
           LastChecked = DateTimeOffset.UtcNow
         };
       }
-    });
+    }
+    catch (Exception ex)
+    {
+      healthCheck.Components["DependencyResolver"] = new ComponentHealth
+      {
+        IsHealthy = false,
+        Message = $"Dependency resolver health check failed: {ex.Message}",
+        LastChecked = DateTimeOffset.UtcNow
+      };
+    }
   }
 
-  private static async Task CheckPluginRepositoryHealthAsync(
+  private static async Task CheckSecurityManagerHealth(
+      IServiceProvider serviceProvider,
+      PluginSystemHealthCheck healthCheck,
+      ILogger? logger,
+      CancellationToken cancellationToken)
+  {
+    try
+    {
+      var securityManager = serviceProvider.GetRequiredService<PluginSecurityManager>();
+
+      // Test security manager by creating a test context
+      var testPluginResult = CreateTestPlugin();
+      if (testPluginResult.IsSuccess)
+      {
+        var testContext = new PluginExecutionContext
+        {
+          WorkingDirectory = Path.GetTempPath(),
+          ExecutionTimeout = TimeSpan.FromSeconds(30),
+          MaxMemoryBytes = 100 * 1024 * 1024, // 100MB
+          EnvironmentVariables = new Dictionary<string, string>(),
+          ExecutionParameters = new Dictionary<string, object>(),
+          CorrelationId = Guid.NewGuid().ToString()
+        };
+
+        var securityContextResult = await securityManager.CreateSecureContextAsync(
+            testPluginResult.Value, testContext, cancellationToken);
+
+        if (securityContextResult.IsSuccess)
+        {
+          await securityManager.ReleaseContextAsync(securityContextResult.Value.ContextId);
+          healthCheck.Components["SecurityManager"] = new ComponentHealth
+          {
+            IsHealthy = true,
+            Message = "Security manager operational",
+            LastChecked = DateTimeOffset.UtcNow
+          };
+        }
+        else
+        {
+          healthCheck.Components["SecurityManager"] = new ComponentHealth
+          {
+            IsHealthy = false,
+            Message = $"Security manager context creation failed: {securityContextResult.Error.Message}",
+            LastChecked = DateTimeOffset.UtcNow
+          };
+        }
+      }
+      else
+      {
+        healthCheck.Components["SecurityManager"] = new ComponentHealth
+        {
+          IsHealthy = false,
+          Message = "Failed to create test plugin for security manager health check",
+          LastChecked = DateTimeOffset.UtcNow
+        };
+      }
+    }
+    catch (Exception ex)
+    {
+      healthCheck.Components["SecurityManager"] = new ComponentHealth
+      {
+        IsHealthy = false,
+        Message = $"Security manager health check failed: {ex.Message}",
+        LastChecked = DateTimeOffset.UtcNow
+      };
+    }
+  }
+
+  private static async Task CheckPluginRepositoryHealth(
       IServiceProvider serviceProvider,
       PluginSystemHealthCheck healthCheck,
       ILogger? logger,
@@ -338,6 +437,27 @@ public static class PluginServiceExtensions
         Message = $"Plugin repository health check failed: {ex.Message}",
         LastChecked = DateTimeOffset.UtcNow
       };
+    }
+  }
+
+  private static Result<Plugin> CreateTestPlugin()
+  {
+    try
+    {
+      return Plugin.Create(
+          "HealthCheckTestPlugin",
+          new Version(1, 0, 0).ToString(),
+          "Test plugin for health checks",
+          PluginLanguage.CSharp,
+          "test.cs",
+          Path.GetTempPath(),
+          new List<string> { "test" },
+          new Dictionary<string, object>()
+      );
+    }
+    catch (Exception ex)
+    {
+      return Result<Plugin>.Failure(Error.Failure("HealthCheck.TestPluginCreationFailed", ex.Message));
     }
   }
 }

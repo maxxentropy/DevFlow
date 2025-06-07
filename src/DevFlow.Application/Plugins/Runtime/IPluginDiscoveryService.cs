@@ -72,4 +72,18 @@ public interface IPluginDiscoveryService
   Task<Result<PluginManifest>> ScanPluginDirectoryAsync(
       string pluginDirectoryPath,
       CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Computes a hash representing the source of the specified plugin.
+  /// </summary>
+  /// <remarks>The hash is computed based on the plugin's source information provided in the manifest. This method
+  /// is useful for verifying the integrity or uniqueness of a plugin's source.</remarks>
+  /// <param name="manifest">The manifest containing metadata about the plugin. This parameter cannot be null.</param>
+  /// <param name="cancellationToken">A token to monitor for cancellation requests. The default value is <see cref="CancellationToken.None"/>.</param>
+  /// <returns>A task that represents the asynchronous operation. The result contains the hash string of the plugin source. If the
+  /// operation fails, the result will indicate the failure.</returns>
+  Task<Result<string>> GetPluginSourceHashAsync(
+    PluginManifest manifest,
+    CancellationToken cancellationToken = default);
+
 }

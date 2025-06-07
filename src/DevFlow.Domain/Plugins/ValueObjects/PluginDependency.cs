@@ -5,7 +5,6 @@ using System.Linq; // Required for Enumerable.All
 using System.Collections.Generic; // Required for IEnumerable
 using System; // Required for System.Version and StringComparison
 
-
 namespace DevFlow.Domain.Plugins.ValueObjects;
 
 /// <summary>
@@ -57,6 +56,14 @@ public sealed class PluginDependency : ValueObject
   public string Version { get; } // Full version specifier
   public PluginDependencyType Type { get; }
   public string? Source { get; }
+
+  /// <summary>
+  /// Checks if this dependency matches the specified name (case-insensitive).
+  /// </summary>
+  /// <param name="name">The name to match against</param>
+  /// <returns>True if the names match, false otherwise</returns>
+  public bool MatchesName(string name) =>
+      string.Equals(Name, name, StringComparison.OrdinalIgnoreCase);
 
   public static Result<PluginDependency> CreateNuGetPackage(string packageName, string version, string? source = null)
   {
@@ -121,10 +128,6 @@ public sealed class PluginDependency : ValueObject
     return Result<PluginDependency>.Success(new PluginDependency(packageName.Trim(), versionSpecifier.Trim(), PluginDependencyType.PipPackage));
   }
 
-
-  public bool MatchesName(string name) =>
-      string.Equals(Name, name, StringComparison.OrdinalIgnoreCase);
-
   public bool IsVersionSatisfied(string availableVersionString)
   {
     if (string.IsNullOrWhiteSpace(availableVersionString)) return false;
@@ -141,7 +144,6 @@ public sealed class PluginDependency : ValueObject
       // A full SemVer library would be better here.
       return Version.Equals(availableVersionString, StringComparison.OrdinalIgnoreCase); // Fallback to exact match for complex strings
     }
-
 
     try
     {
@@ -214,7 +216,6 @@ public sealed class PluginDependency : ValueObject
         if (!System.Version.TryParse(versionPart, out var notEqualVersion)) return false;
         return availableVersion != notEqualVersion;
       }
-
 
       // Exact version match (default if no operator or if System.Version.TryParse succeeds)
       if (System.Version.TryParse(versionSpecifier, out var exactVersion))

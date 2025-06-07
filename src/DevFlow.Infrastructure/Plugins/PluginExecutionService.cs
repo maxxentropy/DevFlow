@@ -2,8 +2,14 @@
 using DevFlow.Application.Plugins.Runtime;
 using DevFlow.Application.Plugins.Runtime.Models;
 using DevFlow.Domain.Common;
+using DevFlow.Domain.Plugins.Enums;
 using DevFlow.SharedKernel.Results;
 using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace DevFlow.Infrastructure.Plugins;
 
@@ -16,25 +22,28 @@ public sealed class PluginExecutionService : IPluginExecutionService
   private readonly IPluginRepository _pluginRepository;
   private readonly IPluginRuntimeManager _runtimeManager;
   private readonly IPluginRuntimeManagerFactory _runtimeManagerFactory;
+  private readonly IPluginDiscoveryService _discoveryService;
   private readonly ILogger<PluginExecutionService> _logger;
 
   public PluginExecutionService(
       IPluginRepository pluginRepository,
       IPluginRuntimeManager runtimeManager,
       IPluginRuntimeManagerFactory runtimeManagerFactory,
+      IPluginDiscoveryService discoveryService,
       ILogger<PluginExecutionService> logger)
   {
     _pluginRepository = pluginRepository;
     _runtimeManager = runtimeManager;
     _runtimeManagerFactory = runtimeManagerFactory;
+    _discoveryService = discoveryService;
     _logger = logger;
   }
 
   public async Task<Result<PluginExecutionResult>> ExecutePluginAsync(
-      PluginId pluginId,
-      object? inputData = null,
-      IReadOnlyDictionary<string, object>? executionParameters = null,
-      CancellationToken cancellationToken = default)
+    PluginId pluginId,
+    object? inputData = null,
+    IReadOnlyDictionary<string, object>? executionParameters = null,
+    CancellationToken cancellationToken = default)
   {
     if (pluginId is null)
       return Result<PluginExecutionResult>.Failure(Error.Validation(
@@ -46,73 +55,52 @@ public sealed class PluginExecutionService : IPluginExecutionService
     {
       _logger.LogInformation("Executing plugin: {PluginId}", pluginId.Value);
 
-      // Get the plugin
       var plugin = await _pluginRepository.GetByIdAsync(pluginId, cancellationToken);
       if (plugin is null)
       {
-        var error = Error.NotFound(
-            "PluginExecution.PluginNotFound",
-            $"Plugin with ID '{pluginId.Value}' was not found.");
-        _logger.LogWarning("Plugin not found: {PluginId}", pluginId.Value);
-        return Result<PluginExecutionResult>.Failure(error);
+        return Result<PluginExecutionResult>.Failure(Error.NotFound(
+            "PluginExecution.PluginNotFound", $"Plugin with ID '{pluginId.Value}' was not found."));
       }
 
-      // Validate plugin can be executed
-      var validationResult = await ValidatePluginExecutionAsync(pluginId, cancellationToken);
-      if (validationResult.IsFailure)
+      var manifest = await _discoveryService.ScanPluginDirectoryAsync(plugin.PluginPath, cancellationToken);
+      if (manifest.IsSuccess)
       {
-        _logger.LogWarning("Plugin validation failed: {PluginId}. Error: {Error}",
-            pluginId.Value, validationResult.Error.Message);
-        return Result<PluginExecutionResult>.Failure(validationResult.Error);
+        var currentHashResult = await _discoveryService.GetPluginSourceHashAsync(manifest.Value, cancellationToken);
+        if (currentHashResult.IsSuccess && currentHashResult.Value != plugin.SourceHash)
+        {
+          _logger.LogWarning("Plugin {PluginName} is dirty. Source hash mismatch. Forcing re-validation.", plugin.Metadata.Name);
+          var validationResult = await _runtimeManager.ValidatePluginAsync(plugin, cancellationToken);
+          plugin.UpdateSourceHash(currentHashResult.Value);
+          plugin.Validate(validationResult.IsSuccess && validationResult.Value, validationResult.IsFailure ? validationResult.Error.Message : null);
+          await _pluginRepository.UpdateAsync(plugin, cancellationToken);
+          await _pluginRepository.SaveChangesAsync(cancellationToken);
+          _logger.LogInformation("Plugin {PluginName} re-validated. New status: {Status}", plugin.Metadata.Name, plugin.Status);
+        }
       }
 
-      if (!validationResult.Value)
+      if (plugin.Status != PluginStatus.Available)
       {
-        var error = Error.Validation(
-            "PluginExecution.ValidationFailed",
-            $"Plugin '{plugin.Metadata.Name}' failed validation and cannot be executed.");
-        return Result<PluginExecutionResult>.Failure(error);
+        return Result<PluginExecutionResult>.Failure(Error.Validation(
+            "PluginExecution.NotAvailable", $"Plugin '{plugin.Metadata.Name}' is not in an 'Available' state (Current: {plugin.Status}). Error: {plugin.ErrorMessage}"));
       }
 
-      // Create working directory
       workingDirectory = CreateWorkingDirectory(plugin.Metadata.Name);
-      _logger.LogDebug("Created working directory: {WorkingDirectory}", workingDirectory);
-
-      // Create execution context
-      var contextResult = PluginExecutionContext.Create(
-          workingDirectory,
-          inputData,
-          executionParameters);
-
+      var contextResult = PluginExecutionContext.Create(workingDirectory, inputData, executionParameters);
       if (contextResult.IsFailure)
       {
-        _logger.LogWarning("Failed to create execution context: {Error}", contextResult.Error.Message);
         return Result<PluginExecutionResult>.Failure(contextResult.Error);
       }
 
-      _logger.LogDebug("Created execution context for plugin: {PluginName}", plugin.Metadata.Name);
-
-      // Execute the plugin
       var executionResult = await _runtimeManager.ExecuteAsync(plugin, contextResult.Value, cancellationToken);
-
       if (executionResult.IsSuccess)
       {
-        _logger.LogInformation("Plugin execution completed successfully: {PluginName} ({Duration}ms)",
-            plugin.Metadata.Name, executionResult.Value.ExecutionDuration.TotalMilliseconds);
+        _logger.LogInformation("Plugin execution completed successfully: {PluginName} ({Duration}ms)", plugin.Metadata.Name, executionResult.Value.ExecutionDuration.TotalMilliseconds);
       }
       else
       {
-        _logger.LogWarning("Plugin execution failed: {PluginName}. Error: {Error}",
-            plugin.Metadata.Name, executionResult.Error.Message);
+        _logger.LogWarning("Plugin execution failed: {PluginName}. Error: {Error}", plugin.Metadata.Name, executionResult.Error.Message);
       }
-
       return executionResult;
-    }
-    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-    {
-      _logger.LogWarning("Plugin execution was cancelled: {PluginId}", pluginId.Value);
-      var error = Error.Failure("PluginExecution.Cancelled", "Plugin execution was cancelled.");
-      return Result<PluginExecutionResult>.Failure(error);
     }
     catch (Exception ex)
     {
@@ -122,7 +110,6 @@ public sealed class PluginExecutionService : IPluginExecutionService
     }
     finally
     {
-      // Cleanup working directory
       if (!string.IsNullOrEmpty(workingDirectory))
       {
         await CleanupWorkingDirectoryAsync(workingDirectory);
@@ -130,10 +117,12 @@ public sealed class PluginExecutionService : IPluginExecutionService
     }
   }
 
-  public async Task<Result<bool>> ValidatePluginExecutionAsync(
-      PluginId pluginId,
-      CancellationToken cancellationToken = default)
+  // ... The other methods (ValidatePluginExecutionAsync, GetPluginCapabilitiesAsync, etc.) remain the same ...
+  // ... as their definitions in your codebase are correct. I'm omitting them for brevity, 
+  // ... but they should remain in your file.
+  public async Task<Result<bool>> ValidatePluginExecutionAsync(PluginId pluginId, CancellationToken cancellationToken = default)
   {
+    // ... implementation ...
     if (pluginId is null)
       return Result<bool>.Failure(Error.Validation(
           "PluginExecution.PluginIdNull", "Plugin ID cannot be null."));
@@ -142,7 +131,6 @@ public sealed class PluginExecutionService : IPluginExecutionService
     {
       _logger.LogDebug("Validating plugin execution: {PluginId}", pluginId.Value);
 
-      // Get the plugin
       var plugin = await _pluginRepository.GetByIdAsync(pluginId, cancellationToken);
       if (plugin is null)
       {
@@ -152,7 +140,6 @@ public sealed class PluginExecutionService : IPluginExecutionService
         return Result<bool>.Failure(error);
       }
 
-      // Check if runtime manager can execute the plugin
       if (!_runtimeManager.CanExecutePlugin(plugin))
       {
         _logger.LogWarning("No compatible runtime manager for plugin: {PluginName} ({Language})",
@@ -160,7 +147,6 @@ public sealed class PluginExecutionService : IPluginExecutionService
         return Result<bool>.Success(false);
       }
 
-      // Validate plugin with runtime manager
       var validationResult = await _runtimeManager.ValidatePluginAsync(plugin, cancellationToken);
       if (validationResult.IsFailure)
       {
@@ -182,10 +168,9 @@ public sealed class PluginExecutionService : IPluginExecutionService
     }
   }
 
-  public async Task<Result<PluginExecutionCapabilities>> GetPluginCapabilitiesAsync(
-      PluginId pluginId,
-      CancellationToken cancellationToken = default)
+  public async Task<Result<PluginExecutionCapabilities>> GetPluginCapabilitiesAsync(PluginId pluginId, CancellationToken cancellationToken = default)
   {
+    // ... implementation ...
     if (pluginId is null)
       return Result<PluginExecutionCapabilities>.Failure(Error.Validation(
           "PluginExecution.PluginIdNull", "Plugin ID cannot be null."));
@@ -194,7 +179,6 @@ public sealed class PluginExecutionService : IPluginExecutionService
     {
       _logger.LogDebug("Getting plugin capabilities: {PluginId}", pluginId.Value);
 
-      // Get the plugin
       var plugin = await _pluginRepository.GetByIdAsync(pluginId, cancellationToken);
       if (plugin is null)
       {
@@ -204,7 +188,6 @@ public sealed class PluginExecutionService : IPluginExecutionService
         return Result<PluginExecutionCapabilities>.Failure(error);
       }
 
-      // Get compatible runtime manager
       var runtimeManager = _runtimeManagerFactory.GetRuntimeManager(plugin);
       if (runtimeManager is null)
       {
@@ -215,7 +198,6 @@ public sealed class PluginExecutionService : IPluginExecutionService
         return Result<PluginExecutionCapabilities>.Success(capabilities);
       }
 
-      // Validate the plugin
       var validationResult = await runtimeManager.ValidatePluginAsync(plugin, cancellationToken);
       if (validationResult.IsFailure)
       {
@@ -235,7 +217,6 @@ public sealed class PluginExecutionService : IPluginExecutionService
         return Result<PluginExecutionCapabilities>.Success(capabilities);
       }
 
-      // Create successful capabilities
       var executableCapabilities = PluginExecutionCapabilities.CreateExecutable(
           plugin.Metadata.Language.ToString(),
           runtimeManager.RuntimeId,
@@ -254,14 +235,12 @@ public sealed class PluginExecutionService : IPluginExecutionService
           "PluginExecution.CapabilitiesException", $"Failed to get plugin capabilities: {ex.Message}"));
     }
   }
-
   private static string CreateWorkingDirectory(string pluginName)
   {
     var sanitizedPluginName = string.Join("_", pluginName.Split(Path.GetInvalidFileNameChars()));
     var uniqueId = Guid.NewGuid().ToString("N")[..8];
     var directoryName = $"devflow-plugin-{sanitizedPluginName}-{uniqueId}";
     var workingDirectory = Path.Combine(Path.GetTempPath(), directoryName);
-
     Directory.CreateDirectory(workingDirectory);
     return workingDirectory;
   }
@@ -272,16 +251,13 @@ public sealed class PluginExecutionService : IPluginExecutionService
     {
       if (Directory.Exists(workingDirectory))
       {
-        // Give a brief moment for any file handles to be released
         await Task.Delay(100);
         Directory.Delete(workingDirectory, true);
-        _logger.LogDebug("Cleaned up working directory: {WorkingDirectory}", workingDirectory);
       }
     }
     catch (Exception ex)
     {
       _logger.LogWarning(ex, "Failed to cleanup working directory: {WorkingDirectory}", workingDirectory);
-      // Don't throw - cleanup failure shouldn't fail the operation
     }
   }
 }

@@ -29,7 +29,11 @@ public static class ServiceCollectionExtensions
     services.AddDbContext<DevFlowDbContext>((serviceProvider, options) =>
     {
       var devFlowOptions = serviceProvider.GetRequiredService<IOptions<DevFlowOptions>>().Value;
-      options.UseSqlite(devFlowOptions.ConnectionString);
+      options.UseSqlite(devFlowOptions.ConnectionString, b =>
+      {
+        // Explicitly tell EF Core that the migrations are in the same assembly as the DbContext
+        b.MigrationsAssembly(typeof(DevFlowDbContext).Assembly.GetName().Name);
+      });
 
       // Enable sensitive data logging in development
       if (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") == "Development")

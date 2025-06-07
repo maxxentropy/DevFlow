@@ -103,6 +103,22 @@ public sealed class Plugin : AggregateRoot<PluginId>
   public string? ErrorMessage { get; private set; }
 
   /// <summary>
+  /// Gets the SHA256 hash of the plugin's critical source files (manifest and entry point).
+  /// Used to detect changes for re-validation.
+  /// </summary>
+  public string? SourceHash { get; private set; }
+
+  /// <summary>
+  /// Updates the source hash of the plugin.
+  /// </summary>
+  /// <param name="newHash">The new SHA256 hash of the plugin's source files.</param>
+  public void UpdateSourceHash(string newHash)
+  {
+    SourceHash = newHash;
+  }
+
+
+  /// <summary>
   /// Creates a new plugin with the specified details.
   /// </summary>
   public static Result<Plugin> Create(
